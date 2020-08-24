@@ -1,18 +1,21 @@
 using System;
 using System.Collections.Generic;
-using UnityEngine.Rendering;
 using UnityEngine.Serialization;
+using Utilities;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
-    public enum ShaderVariantLogLevel
+    enum ShaderVariantLogLevel
     {
         Disabled,
         OnlyHDRPShaders,
         AllShaders,
     }
 
-    // The HDRenderPipeline assumes linear lighting. Doesn't work with gamma.
+    /// <summary>
+    /// High Definition Render Pipeline asset.
+    /// </summary>
+    [HelpURL(Documentation.baseURL + Documentation.version + Documentation.subURL + "HDRP-Asset" + Documentation.endURL)]
     public partial class HDRenderPipelineAsset : RenderPipelineAsset
     {
 
@@ -20,48 +23,65 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         {
         }
 
-        protected override UnityEngine.Rendering.RenderPipeline CreatePipeline()
-        {
-            // safe: When we return a null render pipline it will do nothing in the rendering
-            HDRenderPipeline pipeline = null;
+        void Reset() => OnValidate();
 
-            // We need to do catch every errors that happend during the HDRP build, when we upgrade the
-            // HDRP package, some required assets are not yet imported by the package manager when the
-            // pipeline is created so in that case, we just return a null pipeline. Some error may appear
-            // when we upgrade the pipeline but it's better than breaking HDRP resources an causing more
-            // errors.
-            try
-            {
-                pipeline = new HDRenderPipeline(this);
-            } catch (Exception e) {
-                UnityEngine.Debug.LogError(e);
-            }
+        /// <summary>
+        /// CreatePipeline implementation.
+        /// </summary>
+        /// <returns>A new HDRenderPipeline instance.</returns>
+        protected override RenderPipeline CreatePipeline()
+            => new HDRenderPipeline(this, HDRenderPipeline.defaultAsset);
 
-            return pipeline;
-        }
-
+        /// <summary>
+        /// OnValidate implementation.
+        /// </summary>
         protected override void OnValidate()
         {
             //Do not reconstruct the pipeline if we modify other assets.
             //OnValidate is called once at first selection of the asset.
-            if (GraphicsSettings.renderPipelineAsset == this)
+            if (GraphicsSettings.currentRenderPipeline == this)
                 base.OnValidate();
+
+            UpdateRenderingLayerNames();
         }
 
         [SerializeField]
         RenderPipelineResources m_RenderPipelineResources;
 
-        public RenderPipelineResources renderPipelineResources
+        internal RenderPipelineResources renderPipelineResources
         {
             get { return m_RenderPipelineResources; }
             set { m_RenderPipelineResources = value; }
         }
 
+        [SerializeField]
+        HDRenderPipelineRayTracingResources m_RenderPipelineRayTracingResources;
+        internal HDRenderPipelineRayTracingResources renderPipelineRayTracingResources
+        {
+            get { return m_RenderPipelineRayTracingResources; }
+            set { m_RenderPipelineRayTracingResources = value; }
+        }
+
+        [SerializeField] private VolumeProfile m_DefaultVolumeProfile;
+
+        internal VolumeProfile defaultVolumeProfile
+        {
+            get => m_DefaultVolumeProfile;
+            set => m_DefaultVolumeProfile = value;
+        }
+
 #if UNITY_EDITOR
+        [SerializeField] private VolumeProfile m_DefaultLookDevProfile;
+
+        internal VolumeProfile defaultLookDevProfile
+        {
+            get => m_DefaultLookDevProfile;
+            set => m_DefaultLookDevProfile = value;
+        }
+
         HDRenderPipelineEditorResources m_RenderPipelineEditorResources;
 
-
-        public HDRenderPipelineEditorResources renderPipelineEditorResources
+        internal HDRenderPipelineEditorResources renderPipelineEditorResources
         {
             get
             {
@@ -81,15 +101,15 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         // To be able to turn on/off FrameSettings properties at runtime for debugging purpose without affecting the original one
         // we create a runtime copy (m_ActiveFrameSettings that is used, and any parametrization is done on serialized frameSettings)
         [SerializeField]
-        FrameSettings m_RenderingPathDefaultCameraFrameSettings = FrameSettings.defaultCamera;
+        FrameSettings m_RenderingPathDefaultCameraFrameSettings = FrameSettings.NewDefaultCamera();
 
         [SerializeField]
-        FrameSettings m_RenderingPathDefaultBakedOrCustomReflectionFrameSettings = FrameSettings.defaultCustomOrBakeReflectionProbe;
+        FrameSettings m_RenderingPathDefaultBakedOrCustomReflectionFrameSettings = FrameSettings.NewDefaultCustomOrBakeReflectionProbe();
 
         [SerializeField]
-        FrameSettings m_RenderingPathDefaultRealtimeReflectionFrameSettings = FrameSettings.defaultRealtimeReflectionProbe;
+        FrameSettings m_RenderingPathDefaultRealtimeReflectionFrameSettings = FrameSettings.NewDefaultRealtimeReflectionProbe();
 
-        public ref FrameSettings GetDefaultFrameSettings(FrameSettingsRenderType type)
+        internal ref FrameSettings GetDefaultFrameSettings(FrameSettingsRenderType type)
         {
             switch(type)
             {
@@ -104,17 +124,17 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             }
         }
 
-        public bool frameSettingsHistory { get; set; } = false;
+        internal bool frameSettingsHistory { get; set; } = false;
 
-        public ReflectionSystemParameters reflectionSystemParameters
+        internal ReflectionSystemParameters reflectionSystemParameters
         {
             get
             {
                 return new ReflectionSystemParameters
                 {
-                    maxPlanarReflectionProbePerCamera = currentPlatformRenderPipelineSettings.lightLoopSettings.planarReflectionProbeCacheSize,
+                    maxPlanarReflectionProbePerCamera = currentPlatformRenderPipelineSettings.lightLoopSettings.maxPlanarReflectionOnScreen,
                     maxActivePlanarReflectionProbe = 512,
-                    planarReflectionProbeSize = (int)currentPlatformRenderPipelineSettings.lightLoopSettings.planarReflectionTextureSize,
+                    planarReflectionProbeSize = (int)PlanarReflectionAtlasResolution.PlanarReflectionResolution512,
                     maxActiveReflectionProbe = 512,
                     reflectionProbeSize = (int)currentPlatformRenderPipelineSettings.lightLoopSettings.reflectionCubemapSize
                 };
@@ -128,147 +148,158 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
 
         // Store the various RenderPipelineSettings for each platform (for now only one)
         [SerializeField, FormerlySerializedAs("renderPipelineSettings")]
-        RenderPipelineSettings m_RenderPipelineSettings = RenderPipelineSettings.@default;
+        RenderPipelineSettings m_RenderPipelineSettings = RenderPipelineSettings.NewDefault();
 
-        // Return the current use RenderPipelineSettings (i.e for the current platform)
+        /// <summary>Return the current use RenderPipelineSettings (i.e for the current platform)</summary>
         public RenderPipelineSettings currentPlatformRenderPipelineSettings => m_RenderPipelineSettings;
 
-        public bool allowShaderVariantStripping = true;
-        public bool enableSRPBatcher = true;
-        public ShaderVariantLogLevel shaderVariantLogLevel = ShaderVariantLogLevel.Disabled;
+        [SerializeField]
+        internal bool allowShaderVariantStripping = true;
+        [SerializeField]
+        internal bool enableSRPBatcher = true;
+        [SerializeField]
+        internal ShaderVariantLogLevel shaderVariantLogLevel = ShaderVariantLogLevel.Disabled;
+
+        /// <summary>Available material quality levels for this asset.</summary>
+        [FormerlySerializedAs("materialQualityLevels")]
+        public MaterialQuality availableMaterialQualityLevels = (MaterialQuality)(-1);
+
+        [SerializeField, FormerlySerializedAs("m_CurrentMaterialQualityLevel")]
+        private MaterialQuality m_DefaultMaterialQualityLevel = MaterialQuality.High;
+
+        /// <summary>Default material quality level for this asset.</summary>
+        public MaterialQuality defaultMaterialQualityLevel { get => m_DefaultMaterialQualityLevel; }
 
         [SerializeField]
         [Obsolete("Use diffusionProfileSettingsList instead")]
-        public DiffusionProfileSettings diffusionProfileSettings;
+        internal DiffusionProfileSettings diffusionProfileSettings;
 
         [SerializeField]
-        public DiffusionProfileSettings[] diffusionProfileSettingsList = new DiffusionProfileSettings[0];
+        internal DiffusionProfileSettings[] diffusionProfileSettingsList = new DiffusionProfileSettings[0];
+
+        void UpdateRenderingLayerNames()
+        {
+            m_RenderingLayerNames = new string[32];
+
+            m_RenderingLayerNames[0] = m_RenderPipelineSettings.lightLayerName0;
+            m_RenderingLayerNames[1] = m_RenderPipelineSettings.lightLayerName1;
+            m_RenderingLayerNames[2] = m_RenderPipelineSettings.lightLayerName2;
+            m_RenderingLayerNames[3] = m_RenderPipelineSettings.lightLayerName3;
+            m_RenderingLayerNames[4] = m_RenderPipelineSettings.lightLayerName4;
+            m_RenderingLayerNames[5] = m_RenderPipelineSettings.lightLayerName5;
+            m_RenderingLayerNames[6] = m_RenderPipelineSettings.lightLayerName6;
+            m_RenderingLayerNames[7] = m_RenderPipelineSettings.lightLayerName7;
+
+            // Unused
+            for (int i = 8; i < m_RenderingLayerNames.Length; ++i)
+            {
+                m_RenderingLayerNames[i] = string.Format("Unused {0}", i);
+            }
+        }
 
         // HDRP use GetRenderingLayerMaskNames to create its light linking system
         // Mean here we define our name for light linking.
         [System.NonSerialized]
-        string[] m_RenderingLayerNames = null;
+        string[] m_RenderingLayerNames;
         string[] renderingLayerNames
         {
             get
             {
                 if (m_RenderingLayerNames == null)
                 {
-                    m_RenderingLayerNames = new string[32];
-
-                    // By design we can't touch this one, but we can rename it
-                    m_RenderingLayerNames[0] = "Light Layer default";
-
-                    // We only support up to 7 layer + default.
-                    for (int i = 1; i < 8; ++i)
-                    {
-                        m_RenderingLayerNames[i] = string.Format("Light Layer {0}", i);
-                    }
-
-                    // Unused
-                    for (int i = 8; i < m_RenderingLayerNames.Length; ++i)
-                    {
-                        m_RenderingLayerNames[i] = string.Format("Unused {0}", i);
-                    }
+                    UpdateRenderingLayerNames();
                 }
 
                 return m_RenderingLayerNames;
             }
         }
 
+        /// <summary>Names used for display of rendering layer masks.</summary>
         public override string[] renderingLayerMaskNames
+            => renderingLayerNames;
+
+        [System.NonSerialized]
+        string[] m_LightLayerNames = null;
+        /// <summary>
+        /// Names used for display of light layers.
+        /// </summary>
+        public string[] lightLayerNames
         {
             get
             {
-                return renderingLayerNames;
+                if (m_LightLayerNames == null)
+                {
+                    m_LightLayerNames = new string[8];
+                }
+
+                for (int i = 0; i < 8; ++i)
+                {
+                    m_LightLayerNames[i] = renderingLayerNames[i];
+                }
+
+                return m_LightLayerNames;
             }
         }
 
+        /// <summary>HDRP default shader.</summary>
         public override Shader defaultShader
-        {
-            get
-            {
-                return m_RenderPipelineResources.shaders.defaultPS;
-            }
-        }
+            => m_RenderPipelineResources?.shaders.defaultPS;
+
+        // List of custom post process Types that will be executed in the project, in the order of the list (top to back)
+        [SerializeField]
+        internal List<string> beforeTransparentCustomPostProcesses = new List<string>();
+        [SerializeField]
+        internal List<string> beforePostProcessCustomPostProcesses = new List<string>();
+        [SerializeField]
+        internal List<string> afterPostProcessCustomPostProcesses = new List<string>();
 
 #if UNITY_EDITOR
+        /// <summary>HDRP default material.</summary>
         public override Material defaultMaterial
-        {
-            get
-            {
-                return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.materials.defaultDiffuseMat;
-            }
-        }
+            => renderPipelineEditorResources?.materials.defaultDiffuseMat;
 
         // call to GetAutodeskInteractiveShaderXXX are only from within editor
+        /// <summary>HDRP default autodesk interactive shader.</summary>
         public override Shader autodeskInteractiveShader
-        {
-            get
-            {
-                return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.shaderGraphs.autodeskInteractive;
-            }
-        }
+            => renderPipelineEditorResources?.shaderGraphs.autodeskInteractive;
 
+        /// <summary>HDRP default autodesk interactive transparent shader.</summary>
         public override Shader autodeskInteractiveTransparentShader
-        {
-            get
-            {
-                return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.shaderGraphs.autodeskInteractiveTransparent;
-            }
-        }
+            => renderPipelineEditorResources?.shaderGraphs.autodeskInteractiveTransparent;
 
+        /// <summary>HDRP default autodesk interactive masked shader.</summary>
         public override Shader autodeskInteractiveMaskedShader
-        {
-            get
-            {
-                return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.shaderGraphs.autodeskInteractiveMasked;
-            }
-        }
+            => renderPipelineEditorResources?.shaderGraphs.autodeskInteractiveMasked;
 
+        /// <summary>HDRP default terrain detail lit shader.</summary>
         public override Shader terrainDetailLitShader
-        {
-            get
-            {
-                return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.shaders.terrainDetailLitShader;
-            }
-        }
+            => renderPipelineEditorResources?.shaders.terrainDetailLitShader;
 
+        /// <summary>HDRP default terrain detail grass shader.</summary>
         public override Shader terrainDetailGrassShader
-        {
-            get
-            {
-                return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.shaders.terrainDetailGrassShader;
-            }
-        }
+            => renderPipelineEditorResources?.shaders.terrainDetailGrassShader;
 
+        /// <summary>HDRP default terrain detail grass billboard shader.</summary>
         public override Shader terrainDetailGrassBillboardShader
-        {
-            get
-            {
-                return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.shaders.terrainDetailGrassBillboardShader;
-            }
-        }
+            => renderPipelineEditorResources?.shaders.terrainDetailGrassBillboardShader;
 
         // Note: This function is HD specific
+        /// <summary>HDRP default Decal material.</summary>
         public Material GetDefaultDecalMaterial()
-        {
-            return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.materials.defaultDecalMat;
-        }
+            => renderPipelineEditorResources?.materials.defaultDecalMat;
 
         // Note: This function is HD specific
+        /// <summary>HDRP default mirror material.</summary>
         public Material GetDefaultMirrorMaterial()
-        {
-            return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.materials.defaultMirrorMat;
-        }
+            => renderPipelineEditorResources?.materials.defaultMirrorMat;
 
+        /// <summary>HDRP default particles material.</summary>
+        public override Material defaultParticleMaterial
+            => renderPipelineEditorResources?.materials.defaultParticleMat;
+
+        /// <summary>HDRP default terrain material.</summary>
         public override Material defaultTerrainMaterial
-        {
-            get
-            {
-                return renderPipelineEditorResources == null ? null : renderPipelineEditorResources.materials.defaultTerrainMat;
-            }
-        }
+            => renderPipelineEditorResources?.materials.defaultTerrainMat;
 
         // Array structure that allow us to manipulate the set of defines that the HD render pipeline needs
         List<string> defineArray = new List<string>();
@@ -296,9 +327,8 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         }
 
         // This function allows us to raise or remove some preprocessing defines based on the render pipeline settings
-        public void EvaluateSettings()
+        internal void EvaluateSettings()
         {
-#if REALTIME_RAYTRACING_SUPPORT
             // Grab the current set of defines and split them
             string currentDefineList = UnityEditor.PlayerSettings.GetScriptingDefineSymbolsForGroup(UnityEditor.BuildTargetGroup.Standalone);
             defineArray.Clear();
@@ -306,14 +336,30 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
 
             // Update all the individual defines
             bool needUpdate = false;
-            needUpdate |= UpdateDefineList(currentPlatformRenderPipelineSettings.supportRayTracing, "ENABLE_RAYTRACING");
+            needUpdate |= UpdateDefineList(HDRenderPipeline.GatherRayTracingSupport(currentPlatformRenderPipelineSettings), "ENABLE_RAYTRACING");
 
             // Only set if it changed
             if (needUpdate)
             {
                 UnityEditor.PlayerSettings.SetScriptingDefineSymbolsForGroup(UnityEditor.BuildTargetGroup.Standalone, string.Join(";", defineArray.ToArray()));
             }
-#endif
+        }
+
+        internal bool AddDiffusionProfile(DiffusionProfileSettings profile)
+        {
+            if (diffusionProfileSettingsList.Length < 15)
+            {
+                int index = diffusionProfileSettingsList.Length;
+                Array.Resize(ref diffusionProfileSettingsList, index + 1);
+                diffusionProfileSettingsList[index] = profile;
+                UnityEditor.EditorUtility.SetDirty(this);
+                return true;
+            }
+            else
+            {
+                Debug.LogError("There are too many diffusion profile settings in your HDRP. Please remove one before adding a new one.");
+                return false;
+            }
         }
 #endif
     }

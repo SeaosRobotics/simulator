@@ -46,25 +46,32 @@ namespace Simulator.Sensors
         IWriter<GpsOdometryData> Writer;
 
         Rigidbody RigidBody;
+        IVehicleDynamics Dynamics;
         MapOrigin MapOrigin;
+        
+        public override SensorDistributionType DistributionType => SensorDistributionType.LowLoad;
 
-        public override void OnBridgeSetup(IBridge bridge)
+        private void Awake()
         {
-            Bridge = bridge;
-            Writer = Bridge.AddWriter<GpsOdometryData>(Topic);
+            RigidBody = GetComponentInParent<Rigidbody>();
+            Dynamics = GetComponentInParent<IVehicleDynamics>();
+            MapOrigin = MapOrigin.Find();
         }
 
         public void Start()
         {
-            RigidBody = GetComponentInParent<Rigidbody>();
-            MapOrigin = MapOrigin.Find();
-
             Task.Run(Publisher);
         }
 
         void OnDestroy()
         {
             Destroyed = true;
+        }
+
+        public override void OnBridgeSetup(IBridge bridge)
+        {
+            Bridge = bridge;
+            Writer = Bridge.AddWriter<GpsOdometryData>(Topic);
         }
 
         void Publisher()
@@ -129,6 +136,12 @@ namespace Simulator.Sensors
 
             var location = MapOrigin.GetGpsLocation(transform.position, IgnoreMapOrigin);
 
+            var orientation = transform.rotation;
+            orientation.Set(-orientation.z, orientation.x, -orientation.y, orientation.w); // converting to right handed xyz
+
+            var angularVelocity = RigidBody.angularVelocity;
+            angularVelocity.Set(-angularVelocity.z, angularVelocity.x, -angularVelocity.y); // converting to right handed xyz
+
             var data = new GpsOdometryData()
             {
                 Name = Name,
@@ -143,10 +156,11 @@ namespace Simulator.Sensors
                 Altitude = location.Altitude,
                 Northing = location.Northing,
                 Easting = location.Easting,
-                Orientation = transform.rotation,
+                Orientation = orientation,
                 ForwardSpeed = Vector3.Dot(RigidBody.velocity, transform.forward),
                 Velocity = RigidBody.velocity,
-                AngularVelocity = RigidBody.angularVelocity,
+                AngularVelocity = angularVelocity,
+                WheelAngle = Dynamics.WheelAngle,
             };
             
             lock (MessageQueue)
@@ -162,7 +176,31 @@ namespace Simulator.Sensors
 
         public override void OnVisualize(Visualizer visualizer)
         {
-            //
+            UnityEngine.Debug.Assert(visualizer != null);
+
+            var location = MapOrigin.GetGpsLocation(transform.position, IgnoreMapOrigin);
+
+            var orientation = transform.rotation;
+            orientation.Set(-orientation.z, orientation.x, -orientation.y, orientation.w); // converting to right handed xyz
+
+            var angularVelocity = RigidBody.angularVelocity;
+            angularVelocity.Set(-angularVelocity.z, angularVelocity.x, -angularVelocity.y); // converting to right handed xyz
+
+            var graphData = new Dictionary<string, object>()
+            {
+                {"Child Frame", ChildFrame},
+                {"Ignore MapOrigin", IgnoreMapOrigin},
+                {"Latitude", location.Latitude},
+                {"Longitude", location.Longitude},
+                {"Altitude", location.Altitude},
+                {"Northing", location.Northing},
+                {"Easting", location.Easting},
+                {"Orientation", orientation},
+                {"Forward Speed", Vector3.Dot(RigidBody.velocity, transform.forward)},
+                {"Velocity", RigidBody.velocity},
+                {"Angular Velocity", angularVelocity}
+            };
+            visualizer.UpdateGraphValues(graphData);
         }
 
         public override void OnVisualizeToggle(bool state)

@@ -1,17 +1,15 @@
-using System;
-using UnityEditor.Rendering;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering.HDPipeline;
-using UnityEngine.Rendering;
+using UnityEngine.Rendering.HighDefinition;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline
+namespace UnityEditor.Rendering.HighDefinition
 {
     [CanEditMultipleObjects]
     [VolumeComponentEditor(typeof(HDShadowSettings))]
-    public class HDShadowSettingsEditor : VolumeComponentEditor
+    class HDShadowSettingsEditor : VolumeComponentEditor
     {
         SerializedDataParameter m_MaxShadowDistance;
 
+        SerializedDataParameter m_DirectionalTransmissionMultiplier;
         SerializedDataParameter m_CascadeShadowSplitCount;
 
         SerializedDataParameter[] m_CascadeShadowSplits = new SerializedDataParameter[3];
@@ -31,6 +29,7 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             var o = new PropertyFetcher<HDShadowSettings>(serializedObject);
 
             m_MaxShadowDistance = Unpack(o.Find(x => x.maxShadowDistance));
+            m_DirectionalTransmissionMultiplier = Unpack(o.Find(x => x.directionalTransmissionMultiplier));
             m_CascadeShadowSplitCount = Unpack(o.Find(x => x.cascadeShadowSplitCount));
             m_CascadeShadowSplits[0] = Unpack(o.Find(x => x.cascadeShadowSplit0));
             m_CascadeShadowSplits[1] = Unpack(o.Find(x => x.cascadeShadowSplit1));
@@ -45,21 +44,26 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
 
         public override void OnInspectorGUI()
         {
-            Rect decaledRect = EditorGUILayout.GetControlRect();
-            decaledRect.x += 20;
-            decaledRect.width -= 20;
+            PropertyField(m_MaxShadowDistance, EditorGUIUtility.TrTextContent("Max Distance", "In Meter"));
+            Rect firstLine = GUILayoutUtility.GetLastRect();
+
+            EditorGUILayout.Space();
+
+            EditorGUILayout.LabelField("Directional Light");
+
+            Rect shiftedRect = EditorGUILayout.GetControlRect();
+            shiftedRect.x += 20;
+            shiftedRect.width -= 20;
             EditorGUI.BeginChangeCheck();
-            Unit unit = (Unit)EditorGUI.EnumPopup(decaledRect, EditorGUIUtility.TrTextContent("Working Unit", "Except Max Distance which will be still in meter"), m_State.value);
+            Unit unit = (Unit)EditorGUI.EnumPopup(shiftedRect, EditorGUIUtility.TrTextContent("Working Unit", "Except Max Distance which will be still in meter"), m_State.value);
             if (EditorGUI.EndChangeCheck())
             {
                 m_State.value = unit;
                 (serializedObject.targetObject as HDShadowSettings).InitNormalized(m_State.value == Unit.Percent);
             }
 
-            Rect firstLine = GUILayoutUtility.GetLastRect();
-            PropertyField(m_MaxShadowDistance, EditorGUIUtility.TrTextContent("Max Distance", "In Meter"));
+            PropertyField(m_DirectionalTransmissionMultiplier, EditorGUIUtility.TrTextContent("Transmission  Multiplier"));
 
-            EditorGUILayout.Space();
             EditorGUI.BeginChangeCheck();
             PropertyField(m_CascadeShadowSplitCount, EditorGUIUtility.TrTextContent("Cascade Count"));
             if (EditorGUI.EndChangeCheck())
@@ -81,7 +85,7 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
                     PropertyField(m_CascadeShadowSplits[i], EditorGUIUtility.TrTextContent(string.Format("Split {0}", i + 1)));
                 }
 
-                if (LightLoop.s_UseCascadeBorders)
+                if (HDRenderPipeline.s_UseCascadeBorders)
                 {
                     EditorGUILayout.Space();
 
@@ -94,16 +98,16 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
                 EditorGUILayout.Space();
 
                 GUILayout.Label("Cascade splits");
-                ShadowCascadeGUI.DrawCascadeSplitGUI(m_CascadeShadowSplits, LightLoop.s_UseCascadeBorders ? m_CascadeShadowBorders : null, (uint)cascadeCount, blendLastCascade: true, useMetric: unit == Unit.Metric, baseMetric: m_MaxShadowDistance.value.floatValue);
+                ShadowCascadeGUI.DrawCascadeSplitGUI(m_CascadeShadowSplits, HDRenderPipeline.s_UseCascadeBorders ? m_CascadeShadowBorders : null, (uint)cascadeCount, blendLastCascade: true, useMetric: unit == Unit.Metric, baseMetric: m_MaxShadowDistance.value.floatValue);
                 EditorGUI.indentLevel--;
             }
 
             HDRenderPipeline hdrp = UnityEngine.Rendering.RenderPipelineManager.currentPipeline as HDRenderPipeline;
             if (hdrp == null)
                 return;
-            
+
             Rect visualizeCascade = firstLine;
-            visualizeCascade.y -= EditorGUIUtility.singleLineHeight;
+            visualizeCascade.y -= (EditorGUIUtility.singleLineHeight - 2);
             visualizeCascade.height -= 2;
             visualizeCascade.x += EditorGUIUtility.labelWidth + 20;
             visualizeCascade.width -= EditorGUIUtility.labelWidth + 20;

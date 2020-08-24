@@ -1,50 +1,144 @@
 using System;
-using UnityEngine.Rendering;
+using UnityEngine.Serialization;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
+    /// <summary>
+    /// The resolution at which HDRP processes the bloom effect.
+    /// </summary>
+    /// <seealso cref="Bloom.resolution"/>
     public enum BloomResolution : int
     {
+        /// <summary>
+        /// Quarter resolution. Faster than <see cref="Half"/> but can result in aliasing artifacts.
+        /// It is recommended to use this mode when targetting high-DPI displays.
+        /// </summary>
         Quarter = 4,
+
+        /// <summary>
+        /// Half resolution.
+        /// </summary>
         Half = 2
     }
 
+    /// <summary>
+    /// A volume component that holds settings for the Bloom effect.
+    /// </summary>
     [Serializable, VolumeComponentMenu("Post-processing/Bloom")]
-    public sealed class Bloom : VolumeComponent, IPostProcessComponent
+    public sealed class Bloom : VolumeComponentWithQuality, IPostProcessComponent
     {
-        [Tooltip("Strength of the bloom filter.")]
+        /// <summary>
+        /// Set the level of brightness to filter out pixels under this level. This value is expressed in gamma-space. A value above 0 will disregard energy conservation rules.
+        /// </summary>
+        [Tooltip("Set the level of brightness to filter out pixels under this level. This value is expressed in gamma-space. A value above 0 will disregard energy conservation rules.")]
+        public MinFloatParameter threshold = new MinFloatParameter(0f, 0f);
+
+        /// <summary>
+        /// Controls the strength of the bloom filter.
+        /// </summary>
+        [Tooltip("Controls the strength of the bloom filter.")]
         public ClampedFloatParameter intensity = new ClampedFloatParameter(0f, 0f, 1f);
 
-        [Tooltip("Changes the extent of veiling effects.")]
+        /// <summary>
+        /// Controls the extent of the veiling effect.
+        /// </summary>
+        [Tooltip("Controls the extent of the veiling effect.")]
         public ClampedFloatParameter scatter = new ClampedFloatParameter(0.7f, 0f, 1f);
 
-        [Tooltip("Global tint of the bloom filter.")]
+        /// <summary>
+        /// Specifies the tint of the bloom filter.
+        /// </summary>
+        [Tooltip("Specifies the tint of the bloom filter.")]
         public ColorParameter tint = new ColorParameter(Color.white, false, false, true);
 
-        [Tooltip("Dirtiness texture to add smudges or dust to the bloom effect.")]
+        /// <summary>
+        /// Specifies a Texture to add smudges or dust to the bloom effect.
+        /// </summary>
+        [Tooltip("Specifies a Texture to add smudges or dust to the bloom effect.")]
         public TextureParameter dirtTexture = new TextureParameter(null);
 
-        [Tooltip("Amount of dirtiness.")]
+        /// <summary>
+        /// Controls the strength of the lens dirt.
+        /// </summary>
+        [Tooltip("Controls the strength of the lens dirt.")]
         public MinFloatParameter dirtIntensity = new MinFloatParameter(0f, 0f);
 
-        [Tooltip("Use bicubic sampling instead of bilinear sampling for the upsampling passes. This is slightly more expensive but helps getting smoother visuals.")]
-        public BoolParameter highQualityFiltering = new BoolParameter(true);
-
-        [Tooltip("The resolution at which the effect will be done. Quarter resolution is faster and recommended for very high screen resolution (e.g. 4K on consoles).")]
-        public BloomResolutionParameter resolution = new BloomResolutionParameter(BloomResolution.Half);
-
-        [Tooltip("Improves bloom stability with high anamorphism factors or when the resolution is set to Quarter.")]
-        public BoolParameter prefilter = new BoolParameter(false);
-
-        [Tooltip("If true, bloom will use the anamorphism parameter from the current physical camera into account.")]
+        /// <summary>
+        /// When enabled, bloom stretches horizontally depending on the current physical Camera's Anamorphism property value.
+        /// </summary>
+        [Tooltip("When enabled, bloom stretches horizontally depending on the current physical Camera's Anamorphism property value.")]
         public BoolParameter anamorphic = new BoolParameter(true);
 
+        /// <summary>
+        /// Specifies the resolution at which HDRP processes the effect.
+        /// </summary>
+        /// <seealso cref="BloomResolution"/>
+        public BloomResolution resolution
+        {
+            get
+            {
+                if (!UsesQualitySettings())
+                {
+                    return m_Resolution.value;
+                }
+                else
+                {
+                    int qualityLevel = (int)quality.levelAndOverride.level;
+                    return GetPostProcessingQualitySettings().BloomRes[qualityLevel];
+                }
+            }
+            set { m_Resolution.value = value; }
+        }
+
+        /// <summary>
+        /// When enabled, bloom uses bicubic sampling instead of bilinear sampling for the upsampling passes.
+        /// </summary>
+        public bool highQualityFiltering
+        {
+            get
+            {
+                if (!UsesQualitySettings())
+                {
+                    return m_HighQualityFiltering.value;
+                }
+                else
+                {
+                    int qualityLevel = (int)quality.levelAndOverride.level;
+                    return GetPostProcessingQualitySettings().BloomHighQualityFiltering[qualityLevel];
+                }
+            }
+            set { m_HighQualityFiltering.value = value; }
+        }
+
+        [Tooltip("Specifies the resolution at which HDRP processes the effect. Quarter resolution is less resource intensive but can result in aliasing artifacts.")]
+        [SerializeField, FormerlySerializedAs("resolution")]
+        private BloomResolutionParameter m_Resolution = new BloomResolutionParameter(BloomResolution.Half);
+
+        [Tooltip("When enabled, bloom uses bicubic sampling instead of bilinear sampling for the upsampling passes.")]
+        [SerializeField, FormerlySerializedAs("highQualityFiltering")]
+        private BoolParameter m_HighQualityFiltering = new BoolParameter(true);
+
+        /// <summary>
+        /// Tells if the effect needs to be rendered or not.
+        /// </summary>
+        /// <returns><c>true</c> if the effect should be rendered, <c>false</c> otherwise.</returns>
         public bool IsActive()
         {
             return intensity.value > 0f;
         }
     }
 
+    /// <summary>
+    /// A <see cref="VolumeParameter"/> that holds a <see cref="BloomResolution"/> value.
+    /// </summary>
     [Serializable]
-    public sealed class BloomResolutionParameter : VolumeParameter<BloomResolution> { public BloomResolutionParameter(BloomResolution value, bool overrideState = false) : base(value, overrideState) { } }
+    public sealed class BloomResolutionParameter : VolumeParameter<BloomResolution>
+    {
+        /// <summary>
+        /// Creates a new <see cref="BloomResolutionParameter"/> instance.
+        /// </summary>
+        /// <param name="value">The initial value to store in the parameter.</param>
+        /// <param name="overrideState">The initial override state for the parameter.</param>
+        public BloomResolutionParameter(BloomResolution value, bool overrideState = false) : base(value, overrideState) { }
+    }
 }

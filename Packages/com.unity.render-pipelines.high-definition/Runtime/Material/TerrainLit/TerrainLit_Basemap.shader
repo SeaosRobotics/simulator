@@ -6,20 +6,22 @@ Shader "Hidden/HDRP/TerrainLit_Basemap"
 
         // Stencil state
         // Forward
-        [HideInInspector] _StencilRef("_StencilRef", Int) = 2 // StencilLightingUsage.RegularLighting
-        [HideInInspector] _StencilWriteMask("_StencilWriteMask", Int) = 3 // StencilMask.Lighting
+        [HideInInspector] _StencilRef("_StencilRef", Int) = 0  // StencilUsage.Clear
+        [HideInInspector] _StencilWriteMask("_StencilWriteMask", Int) = 3 // StencilUsage.RequiresDeferredLighting | StencilUsage.SubsurfaceScattering
         // GBuffer
-        [HideInInspector] _StencilRefGBuffer("_StencilRefGBuffer", Int) = 2 // StencilLightingUsage.RegularLighting
-        [HideInInspector] _StencilWriteMaskGBuffer("_StencilWriteMaskGBuffer", Int) = 3 // StencilMask.Lighting
+        [HideInInspector] _StencilRefGBuffer("_StencilRefGBuffer", Int) = 2 // StencilUsage.RequiresDeferredLighting
+        [HideInInspector] _StencilWriteMaskGBuffer("_StencilWriteMaskGBuffer", Int) = 3 // StencilUsage.RequiresDeferredLighting | StencilUsage.SubsurfaceScattering
         // Depth prepass
         [HideInInspector] _StencilRefDepth("_StencilRefDepth", Int) = 0 // Nothing
-        [HideInInspector] _StencilWriteMaskDepth("_StencilWriteMaskDepth", Int) = 32 // DoesntReceiveSSR
+        [HideInInspector] _StencilWriteMaskDepth("_StencilWriteMaskDepth", Int) = 8 // StencilUsage.TraceReflectionRay
 
         // Blending state
         [HideInInspector] _ZWrite ("__zw", Float) = 1.0
         [HideInInspector] _CullMode("__cullmode", Float) = 2.0
         [HideInInspector] _ZTestDepthEqualForOpaque("_ZTestDepthEqualForOpaque", Int) = 4 // Less equal
         [HideInInspector] _ZTestGBuffer("_ZTestGBuffer", Int) = 4
+
+		[HideInInspector] _TerrainHolesTexture("Holes Map (RGB)", 2D) = "white" {}
 
         // Caution: C# code in BaseLitUI.cs call LightmapEmissionFlagsProperty() which assume that there is an existing "_EmissionColor"
         // value that exist to identify if the GI emission need to be enabled.
@@ -42,14 +44,15 @@ Shader "Hidden/HDRP/TerrainLit_Basemap"
     #pragma target 4.5
     #pragma only_renderers d3d11 ps4 xboxone vulkan metal switch
 
-    #pragma shader_feature _DISABLE_DECALS
-    #pragma shader_feature _TERRAIN_INSTANCED_PERPIXEL_NORMAL
+    #pragma shader_feature_local _DISABLE_DECALS
+    #pragma shader_feature_local _TERRAIN_INSTANCED_PERPIXEL_NORMAL
 
     //enable GPU instancing support
     #pragma multi_compile_instancing
     #pragma instancing_options assumeuniformscaling nomatrices nolightprobe nolightmap
 
-    // All our shaders use same name for entry point
+	#pragma multi_compile _ _ALPHATEST_ON
+
     #pragma vertex Vert
     #pragma fragment Frag
 
@@ -200,9 +203,9 @@ Shader "Hidden/HDRP/TerrainLit_Basemap"
             #pragma multi_compile _ SHADOWS_SHADOWMASK
             // Setup DECALS_OFF so the shader stripper can remove variants
             #pragma multi_compile DECALS_OFF DECALS_3RT DECALS_4RT
-            
+
             // Supported shadow modes per light type
-            #pragma multi_compile SHADOW_LOW SHADOW_MEDIUM SHADOW_HIGH SHADOW_VERY_HIGH
+            #pragma multi_compile SHADOW_LOW SHADOW_MEDIUM SHADOW_HIGH
 
             #pragma multi_compile USE_FPTL_LIGHTLIST USE_CLUSTERED_LIGHTLIST
 
@@ -214,6 +217,6 @@ Shader "Hidden/HDRP/TerrainLit_Basemap"
         }
 
         UsePass "Hidden/Nature/Terrain/Utilities/PICKING"
-        UsePass "Hidden/Nature/Terrain/Utilities/SELECTION"
+        UsePass "HDRP/TerrainLit/SceneSelectionPass"
     }
 }

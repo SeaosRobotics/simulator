@@ -6,21 +6,50 @@
  */
 
 using PetaPoco;
-using Simulator.Web;
-using System;
 using System.Collections.Generic;
-using System.IO;
 
 namespace Simulator.Database.Services
 {
     public class MapService : IMapService
     {
-        public IEnumerable<MapModel> List(int page, int count, string owner)
+        public IEnumerable<MapModel> List(string filter, int offset, int count, string owner)
         {
             using (var db = DatabaseManager.Open())
             {
-                var sql = Sql.Builder.Where("owner = @0 OR owner IS NULL", owner).OrderBy("id");
-                return db.Page<MapModel>(page, count, sql).Items;
+                if (!string.IsNullOrEmpty(filter))
+                {
+                    var cleanFilter = $"%{filter.Replace("%", "").Replace("_", "")}%";
+                    var filterSql = Sql.Builder
+                        .Where(@"(name LIKE @0)", cleanFilter)
+                        .OrderBy("id")
+                        .Append("LIMIT @0, @1", offset, count);
+
+                    return db.Fetch<MapModel>(filterSql);
+                }
+
+                var sql = Sql.Builder
+                    .Where("owner = @0 OR owner IS NULL", owner)
+                    .OrderBy("id")
+                    .Append("LIMIT @0, @1", offset, count);
+
+                return db.Fetch<MapModel>(sql);
+            }
+        }
+
+        public string GetExistingLocalPath(string url)
+        {
+            using (var db = DatabaseManager.Open())
+            {
+                var sql = Sql.Builder.Where("url = @0", url);
+                return db.SingleOrDefault<MapModel>(sql)?.LocalPath;
+            }
+        }
+
+        public int GetCountOfLocal(string localPath)
+        {
+            using (var db = DatabaseManager.Open())
+            {
+                return db.Single<int>(Sql.Builder.Select("COUNT(*)").From("maps").Where("localPath = @0", localPath));
             }
         }
 

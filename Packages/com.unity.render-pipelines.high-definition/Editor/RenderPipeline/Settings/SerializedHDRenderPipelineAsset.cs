@@ -1,17 +1,21 @@
 using UnityEditor.Rendering;
-using UnityEngine.Experimental.Rendering.HDPipeline;
+using UnityEngine.Rendering.HighDefinition;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline
+namespace UnityEditor.Rendering.HighDefinition
 {
+
     class SerializedHDRenderPipelineAsset
     {
         public SerializedObject serializedObject;
 
         public SerializedProperty renderPipelineResources;
-        public SerializedProperty diffusionProfileSettingsList; 
+        public SerializedProperty defaultMaterialQualityLevel;
+        public SerializedProperty availableMaterialQualityLevels;
+        public SerializedProperty renderPipelineRayTracingResources;
+        public SerializedProperty diffusionProfileSettingsList;
         public SerializedProperty allowShaderVariantStripping;
         public SerializedProperty enableSRPBatcher;
-        public SerializedProperty shaderVariantLogLevel; 
+        public SerializedProperty shaderVariantLogLevel;
         public SerializedRenderPipelineSettings renderPipelineSettings;
         public SerializedFrameSettings defaultFrameSettings;
         public SerializedFrameSettings defaultBakedOrCustomReflectionFrameSettings;
@@ -45,7 +49,11 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
         {
             this.serializedObject = serializedObject;
 
+            defaultMaterialQualityLevel = serializedObject.FindProperty("m_DefaultMaterialQualityLevel");
+            availableMaterialQualityLevels = serializedObject.Find((HDRenderPipelineAsset s) => s.availableMaterialQualityLevels);
+
             renderPipelineResources = serializedObject.FindProperty("m_RenderPipelineResources");
+            renderPipelineRayTracingResources = serializedObject.FindProperty("m_RenderPipelineRayTracingResources");
             diffusionProfileSettingsList = serializedObject.Find((HDRenderPipelineAsset s) => s.diffusionProfileSettingsList);
             allowShaderVariantStripping = serializedObject.Find((HDRenderPipelineAsset s) => s.allowShaderVariantStripping);
             enableSRPBatcher = serializedObject.Find((HDRenderPipelineAsset s) => s.enableSRPBatcher);

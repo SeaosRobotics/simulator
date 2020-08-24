@@ -3,9 +3,13 @@
     "references": [
         "Simulator",
         "Simulator.Plugins",
-        "Simulator.Bridge.Cyber"
+        "Simulator.Bridge.Cyber",
+        "Unity.Mathematics",
+        "Simulator.Network.Core",
+        "Unity.RenderPipelines.HighDefinition.Editor",
+        "Unity.RenderPipelines.Core.Editor",
+        "Unity.RenderPipelines.Core.Runtime"
     ],
-    "optionalUnityReferences": [],
     "includePlatforms": [
         "Editor"
     ],
@@ -15,5 +19,6 @@
     "precompiledReferences": [],
     "autoReferenced": true,
     "defineConstraints": [],
-    "versionDefines": []
+    "versionDefines": [],
+    "noEngineReferences": false
 }

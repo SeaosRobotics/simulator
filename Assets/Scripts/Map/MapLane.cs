@@ -17,19 +17,23 @@ namespace Simulator.Map
         List<T> afters { get; set; }
     }
 
-    public class MapLane : MapDataPoints, IMapLaneLineCommon<MapLane>
+    public class MapLane : MapDataPoints, IMapLaneLineCommon<MapLane>, IMapType
     {
         public bool displayLane = false;
+        public bool needSelfReverseLane = false;
         public bool isSelfReverseLane = false;
-        public GameObject selfReverseLane = null;
+        public string otherSelfReverseLaneId = null;
 
         public float displayLaneWidth = 3.7f; // apollo default lane width
 
         public List<MapLane> befores { get; set; } = new List<MapLane>();
         public List<MapLane> afters { get; set; } = new List<MapLane>();
 
-        [System.NonSerialized]
-        public string id = null; // TODO move to mapdata?
+        public string id
+        {
+            get;
+            set;
+        }
 
         [System.NonSerialized]
         public MapLane leftLaneForward = null;
@@ -48,15 +52,12 @@ namespace Simulator.Map
         public MapLine rightLineBoundry;
         public MapLine stopLine;
 
-        // TODO uncomment for vectorMap
-        //[System.NonSerialized]
-        //public List<Map.Autoware.LaneInfo> laneInfos = new List<Map.Autoware.LaneInfo>();
-
         public List<MapLane> yieldToLanes = new List<MapLane>(); // TODO calc
         [System.NonSerialized]
         public List<MapLane> nextConnectedLanes = new List<MapLane>();
         [System.NonSerialized]
         public List<MapLane> prevConnectedLanes = new List<MapLane>();
+
         [System.NonSerialized]
         public bool Spawnable = false;
         public bool isTrafficLane { get; set; } = false;
@@ -64,8 +65,7 @@ namespace Simulator.Map
         public bool isIntersectionLane { get; set; } = false;
 
         public LaneTurnType laneTurnType = LaneTurnType.NO_TURN;
-        public LaneBoundaryType leftBoundType;
-        public LaneBoundaryType rightBoundType;
+
         public float speedLimit = 20.0f;
 
         public override void Draw()
@@ -81,6 +81,21 @@ namespace Simulator.Map
                 UnityEditor.Handles.Label(transform.position, "    LANE " + laneTurnType);
 #endif
             }
+
+#if UNITY_EDITOR
+            if (UnityEditor.Selection.activeGameObject == this.gameObject && MapAnnotationTool.SHOW_MAP_SELECTED)
+            {
+                foreach (var yl in yieldToLanes)
+                {
+                    if (yl != null)
+                    {
+                        AnnotationGizmos.DrawWaypoints(yl.transform, yl.mapLocalPositions, MapAnnotationTool.PROXIMITY * 0.25f, new Color(1f, 1f, 0f, 0.5f));
+                        AnnotationGizmos.DrawLines(yl.transform, yl.mapLocalPositions, new Color(1f, 1f, 0f, 0.5f));
+                        AnnotationGizmos.DrawArrowHeads(yl.transform, yl.mapLocalPositions, new Color(1f, 1f, 0f, 0.5f));
+                    }
+                }
+            }
+#endif
         }
 
         public void ReversePoints()

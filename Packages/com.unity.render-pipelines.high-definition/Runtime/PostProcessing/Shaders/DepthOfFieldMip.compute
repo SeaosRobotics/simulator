@@ -3,8 +3,9 @@
 
 #pragma only_renderers d3d11 ps4 xboxone vulkan metal switch
 
-#pragma kernel KMainColor   MAIN=KMainColor     CTYPE=float3
-#pragma kernel KMainCoC     MAIN=KMainCoC       CTYPE=float
+#pragma kernel KMainColor        MAIN=KMainColor           CTYPE=float3
+#pragma kernel KMainColorAlpha   MAIN=KMainColorAlpha      CTYPE=float4
+#pragma kernel KMainCoC          MAIN=KMainCoC             CTYPE=float
 
 RW_TEXTURE2D_X(CTYPE, _InputTexture);
 
@@ -31,7 +32,7 @@ CTYPE LoadPixel(uint index)
 [numthreads(GROUP_SIZE, GROUP_SIZE, 1)]
 void MAIN(uint3 dispatchThreadId : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex)
 {
-    UNITY_STEREO_ASSIGN_COMPUTE_EYE_INDEX(dispatchThreadId.z);
+    UNITY_XR_ASSIGN_VIEW_INDEX(dispatchThreadId.z);
 
     uint2 ul = dispatchThreadId.xy << 1u;
 

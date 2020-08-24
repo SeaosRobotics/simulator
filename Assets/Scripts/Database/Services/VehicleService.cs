@@ -12,12 +12,27 @@ namespace Simulator.Database.Services
 {
     public class VehicleService : IVehicleService
     {
-        public IEnumerable<VehicleModel> List(int page, int count, string owner)
+        public IEnumerable<VehicleModel> List(string filter, int offset, int count, string owner)
         {
             using (var db = DatabaseManager.Open())
             {
-                var sql = Sql.Builder.Where("owner = @0 OR owner IS NULL", owner).OrderBy("id");
-                return db.Page<VehicleModel>(page, count, sql).Items;
+                if (!string.IsNullOrEmpty(filter))
+                {
+                    var cleanFilter = $"%{filter.Replace("%", "").Replace("_", "")}%";
+                    var filterSql = Sql.Builder
+                        .Where(@"(name LIKE @0)", cleanFilter)
+                        .OrderBy("id")
+                        .Append("LIMIT @0, @1", offset, count);
+
+                    return db.Fetch<VehicleModel>();
+                }
+
+                var sql = Sql.Builder
+                    .Where("owner = @0 OR owner IS NULL", owner)
+                    .OrderBy("id")
+                    .Append("LIMIT @0, @1", offset, count);
+
+                return db.Fetch<VehicleModel>(sql);
             }
         }
 

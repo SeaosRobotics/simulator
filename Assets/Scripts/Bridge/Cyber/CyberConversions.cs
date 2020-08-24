@@ -10,13 +10,12 @@ using System.Linq;
 using UnityEngine;
 using Simulator.Bridge.Data;
 using System.Text;
+using Unity.Mathematics;
 
 namespace Simulator.Bridge.Cyber
 {
     static class Conversions
     {
-        static readonly DateTime GpsEpoch = new DateTime(1980, 1, 6, 0, 0, 0, DateTimeKind.Utc);
-
         static byte[] ActualBytes(byte[] array, int length)
         {
             byte[] result = new byte[length];
@@ -235,7 +234,7 @@ namespace Simulator.Bridge.Cyber
             else dir = 45 * Mathf.Round((eul.y % 360 + 360) / 45.0f);
 
             var dt = DateTimeOffset.FromUnixTimeMilliseconds((long)(data.Time * 1000.0)).UtcDateTime;
-            var measurement_time = (dt - GpsEpoch).TotalSeconds + 18.0;
+            var measurement_time = GpsUtils.UtcToGpsSeconds(dt);
             var gpsTime = DateTimeOffset.FromUnixTimeSeconds((long)measurement_time).DateTime.ToLocalTime();
 
             return new apollo.canbus.Chassis()
@@ -296,7 +295,7 @@ namespace Simulator.Bridge.Cyber
             double Height = 0; // sea level to WGS84 ellipsoid
 
             var dt = DateTimeOffset.FromUnixTimeMilliseconds((long)(data.Time * 1000.0)).UtcDateTime;
-            var measurement_time = (dt - GpsEpoch).TotalSeconds + 18.0;
+            var measurement_time = GpsUtils.UtcToGpsSeconds(dt);
 
             return new apollo.drivers.gnss.GnssBestPose()
             {
@@ -334,10 +333,7 @@ namespace Simulator.Bridge.Cyber
         public static apollo.localization.Gps ConvertFrom(GpsOdometryData data)
         {
             var angles = data.Orientation.eulerAngles;
-            float roll = angles.z;
-            float pitch = angles.x;
             float yaw = -angles.y;
-            var q = Quaternion.Euler(pitch, roll, yaw);
 
             return new apollo.localization.Gps()
             {
@@ -351,20 +347,14 @@ namespace Simulator.Bridge.Cyber
                 {
                     position = new apollo.common.PointENU()
                     {
-                        x = data.Easting + 500000,  // East from the origin, in meters.
+                        x = data.Easting,  // East from the origin, in meters.
                         y = data.Northing,  // North from the origin, in meters.
                         z = data.Altitude// Up from the WGS-84 ellipsoid, in meters.
                     },
 
                     // A quaternion that represents the rotation from the IMU coordinate
                     // (Right/Forward/Up) to the world coordinate (East/North/Up).
-                    orientation = new apollo.common.Quaternion()
-                    {
-                        qx = q.x,
-                        qy = q.y,
-                        qz = q.z,
-                        qw = q.w,
-                    },
+                    orientation = Convert(data.Orientation),
 
                     // Linear velocity of the VRP in the map reference frame.
                     // East/north/up in meters per second.
@@ -415,7 +405,7 @@ namespace Simulator.Bridge.Cyber
                     }).ToArray(),
             };
         }
-        
+
         public static VehicleControlData ConvertTo(apollo.control.ControlCommand data)
         {
             var vehicleControlData = new VehicleControlData()
@@ -426,7 +416,7 @@ namespace Simulator.Bridge.Cyber
                 SteerTarget = (float)data.steering_target / 100,
                 TimeStampSec = data.header.timestamp_sec,
             };
-            
+
             switch (data.gear_location)
             {
                 case global::apollo.canbus.Chassis.GearPosition.GearNeutral:
@@ -460,8 +450,8 @@ namespace Simulator.Bridge.Cyber
 
                 measurement_time = data.Time,
                 measurement_span = (float)data.MeasurementSpan,
-                linear_acceleration = ConvertToPoint(new Vector3(data.Acceleration.x, data.Acceleration.z, -data.Acceleration.y)),
-                angular_velocity = ConvertToPoint(new Vector3(-data.AngularVelocity.z, data.AngularVelocity.x, -data.AngularVelocity.y)),
+                linear_acceleration = ConvertToPoint(new Vector3(data.Acceleration.x, data.Acceleration.y, data.Acceleration.z)),
+                angular_velocity = ConvertToPoint(new Vector3(data.AngularVelocity.x, data.AngularVelocity.y, data.AngularVelocity.z)),
             };
         }
 
@@ -481,8 +471,8 @@ namespace Simulator.Bridge.Cyber
 
                 imu = new apollo.localization.Pose()
                 {
-                    linear_acceleration = ConvertToPoint(new Vector3(data.Acceleration.x, data.Acceleration.z, -data.Acceleration.y)),
-                    angular_velocity = ConvertToPoint(new Vector3(-data.AngularVelocity.z, data.AngularVelocity.x, -data.AngularVelocity.y)),
+                    linear_acceleration = ConvertToPoint(new Vector3(data.Acceleration.x, data.Acceleration.y, data.Acceleration.z)),
+                    angular_velocity = ConvertToPoint(new Vector3(data.AngularVelocity.x, data.AngularVelocity.y, data.AngularVelocity.z)),
                     heading = yaw,
                     euler_angles = new apollo.common.Point3D()
                     {
@@ -494,7 +484,7 @@ namespace Simulator.Bridge.Cyber
             };
         }
 
-        
+
         public static Detected2DObjectArray ConvertTo(apollo.common.Detection2DArray data)
         {
             return new Detected2DObjectArray()
@@ -518,6 +508,11 @@ namespace Simulator.Bridge.Cyber
             return new apollo.common.Point3D() { x = v.x, y = v.y, z = v.z };
         }
 
+        static apollo.common.Point3D ConvertToPoint(double3 v)
+        {
+            return new apollo.common.Point3D() { x = v.x, y = v.y, z = v.z };
+        }
+
         static apollo.common.Vector3 ConvertToVector(Vector3 v)
         {
             return new apollo.common.Vector3() { x = v.x, y = v.y, z = v.z };
@@ -528,9 +523,9 @@ namespace Simulator.Bridge.Cyber
             return new apollo.common.Quaternion() { qx = q.x, qy = q.y, qz = q.z, qw = q.w };
         }
 
-        static Vector3 Convert(apollo.common.Point3D p)
+        static double3 Convert(apollo.common.Point3D p)
         {
-            return new Vector3((float)p.x, (float)p.y, (float)p.z);
+            return new double3(p.x, p.y, p.z);
         }
 
         static Vector3 Convert(apollo.common.Vector3 v)

@@ -33,7 +33,7 @@ namespace Simulator.Bridge.Ros
                 sb.Append("\",");
 
                 sb.Append("\"msg\":");
-                Bridge.Serialize(message, typeof(T), sb);
+                Bridge.Serialize(message, message.GetType(), sb);
             }
             sb.Append('}');
 

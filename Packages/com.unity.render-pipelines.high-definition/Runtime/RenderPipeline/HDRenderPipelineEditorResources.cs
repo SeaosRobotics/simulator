@@ -1,23 +1,31 @@
 #if UNITY_EDITOR //file must be in realtime assembly folder to be found in HDRPAsset
 using System;
-using UnityEngine.Rendering;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
+    [HelpURL(Documentation.baseURL + Documentation.version + Documentation.subURL + "HDRP-Asset" + Documentation.endURL)]
     public partial class HDRenderPipelineEditorResources : ScriptableObject
     {
-        [Reload("DefaultScene/DefaultSceneRoot.prefab", ReloadAttribute.Package.HDRPEditor)]
+        [Reload("Editor/DefaultScene/DefaultSceneRoot.prefab")]
         public GameObject defaultScene;
-        [Reload("DefaultScene/DefaultRenderingSettings.asset", ReloadAttribute.Package.HDRPEditor)]
-        public VolumeProfile defaultRenderSettingsProfile;
-        [Reload("DefaultScene/DefaultPostProcessingSettings.asset", ReloadAttribute.Package.HDRPEditor)]
-        public VolumeProfile defaultPostProcessingProfile;
+        [Reload("Editor/DefaultDXRScene/DefaultSceneRoot.prefab")]
+        public GameObject defaultDXRScene;
+        [Reload("Editor/DefaultScene/Sky and Fog Settings Profile.asset")]
+        public VolumeProfile defaultSkyAndFogProfile;
+        [Reload("Editor/DefaultDXRScene/Sky and Fog Settings Profile.asset")]
+        public VolumeProfile defaultDXRSkyAndFogProfile;
+        [Reload("Editor/DefaultDXRScene/DXR Settings.asset")]
+        public VolumeProfile defaultDXRSettings;
         [Reload(new[]
         {
-            "RenderPipelineResources/Skin Diffusion Profile.asset",
-            "RenderPipelineResources/Foliage Diffusion Profile.asset"
+            "Runtime/RenderPipelineResources/Skin Diffusion Profile.asset",
+            "Runtime/RenderPipelineResources/Foliage Diffusion Profile.asset"
         })]
-        public DiffusionProfileSettings[] defaultDiffusionProfileSettingsList;
+        [SerializeField]
+        internal DiffusionProfileSettings[] defaultDiffusionProfileSettingsList;
+        
+        [Reload("Editor/RenderPipelineResources/DefaultSettingsVolumeProfile.asset")]
+        public VolumeProfile defaultSettingsVolumeProfile;
 
         [Serializable, ReloadGroup]
         public sealed class ShaderResources
@@ -31,14 +39,18 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         public sealed class MaterialResources
         {
             // Defaults
-            [Reload("RenderPipelineResources/Material/DefaultHDMaterial.mat")]
+            [Reload("Runtime/RenderPipelineResources/Material/DefaultHDMaterial.mat")]
             public Material defaultDiffuseMat;
-            [Reload("RenderPipelineResources/Material/DefaultHDMirrorMaterial.mat")]
+            [Reload("Runtime/RenderPipelineResources/Material/DefaultHDMirrorMaterial.mat")]
             public Material defaultMirrorMat;
-            [Reload("RenderPipelineResources/Material/DefaultHDDecalMaterial.mat")]
+            [Reload("Runtime/RenderPipelineResources/Material/DefaultHDDecalMaterial.mat")]
             public Material defaultDecalMat;
-            [Reload("RenderPipelineResources/Material/DefaultHDTerrainMaterial.mat")]
+            [Reload("Runtime/RenderPipelineResources/Material/DefaultHDParticleMaterial.mat")]
+            public Material defaultParticleMat;
+            [Reload("Runtime/RenderPipelineResources/Material/DefaultHDTerrainMaterial.mat")]
             public Material defaultTerrainMat;
+            [Reload("Editor/RenderPipelineResources/Materials/GUITextureBlit2SRGB.mat")]
+            public Material GUITextureBlit2SRGB;
         }
 
         [Serializable, ReloadGroup]
@@ -49,22 +61,28 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         [Serializable, ReloadGroup]
         public sealed class ShaderGraphResources
         {
-            [Reload("RenderPipelineResources/ShaderGraph/AutodeskInteractive.ShaderGraph")]
+            [Reload("Runtime/RenderPipelineResources/ShaderGraph/AutodeskInteractive.ShaderGraph")]
             public Shader autodeskInteractive;
-            [Reload("RenderPipelineResources/ShaderGraph/AutodeskInteractiveMasked.ShaderGraph")]
+            [Reload("Runtime/RenderPipelineResources/ShaderGraph/AutodeskInteractiveMasked.ShaderGraph")]
             public Shader autodeskInteractiveMasked;
-            [Reload("RenderPipelineResources/ShaderGraph/AutodeskInteractiveTransparent.ShaderGraph")]
+            [Reload("Runtime/RenderPipelineResources/ShaderGraph/AutodeskInteractiveTransparent.ShaderGraph")]
             public Shader autodeskInteractiveTransparent;
+        }
+
+        [Serializable, ReloadGroup]
+        public sealed class LookDevResources
+        {
+            [Reload("Editor/RenderPipelineResources/DefaultLookDevProfile.asset")]
+            public VolumeProfile defaultLookDevVolumeProfile;
         }
 
         public ShaderResources shaders;
         public MaterialResources materials;
         public TextureResources textures;
         public ShaderGraphResources shaderGraphs;
+        public LookDevResources lookDev;
     }
-
-
-
+    
     [UnityEditor.CustomEditor(typeof(HDRenderPipelineEditorResources))]
     class HDRenderPipelineEditorResourcesEditor : UnityEditor.Editor
     {
@@ -76,16 +94,10 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             if (UnityEditor.EditorPrefs.GetBool("DeveloperMode")
                 && GUILayout.Button("Reload All"))
             {
-                var resources = target as HDRenderPipelineEditorResources;
-                resources.defaultScene = null;
-                resources.defaultRenderSettingsProfile = null;
-                resources.defaultPostProcessingProfile = null;
-                resources.defaultDiffusionProfileSettingsList = null;
-                resources.materials = null;
-                resources.textures = null;
-                resources.shaders = null;
-                resources.shaderGraphs = null;
-                ResourceReloader.ReloadAllNullIn(target);
+                foreach(var field in typeof(HDRenderPipelineEditorResources).GetFields())
+                    field.SetValue(target, null);
+
+                ResourceReloader.ReloadAllNullIn(target, HDUtils.GetHDRenderPipelinePath());
             }
         }
     }

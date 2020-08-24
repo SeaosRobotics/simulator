@@ -22,18 +22,18 @@ Shader "Hidden/HDRP/TerrainLit_BasemapGen"
         #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/TerrainLit/TerrainLitSurfaceData.hlsl"
 
         // Terrain builtin keywords
-        #pragma shader_feature _TERRAIN_8_LAYERS
-        #pragma shader_feature _NORMALMAP
-        #pragma shader_feature _MASKMAP
+        #pragma shader_feature_local _TERRAIN_8_LAYERS
+        #pragma shader_feature_local _NORMALMAP
+        #pragma shader_feature_local _MASKMAP
 
-        #pragma shader_feature _TERRAIN_BLEND_HEIGHT
+        #pragma shader_feature_local _TERRAIN_BLEND_HEIGHT
+        #define _TERRAIN_BASEMAP_GEN
 
         #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/TerrainLit/TerrainLit_Splatmap_Includes.hlsl"
 
         CBUFFER_START(UnityTerrain)
             UNITY_TERRAIN_CB_VARS
             float4 _Control0_ST;
-            float4 _Control0_TexelSize;
         CBUFFER_END
 
         struct Varyings
@@ -84,35 +84,6 @@ Shader "Hidden/HDRP/TerrainLit_BasemapGen"
                 InitializeTerrainLitSurfaceData(surfaceData);
                 TerrainSplatBlend(input.texcoord.zw, input.texcoord.xy, surfaceData);
                 return float4(surfaceData.albedo, surfaceData.smoothness);
-            }
-
-            ENDHLSL
-        }
-
-        Pass
-        {
-            // _NormalMap pass will get ignored by terrain basemap generation code. Put here so that the VTC can use it to generate cache for normal maps.
-            Tags
-            {
-                "Name" = "_NormalMap"
-                "Format" = "R16G16_Float"
-                "Size" = "1"
-            }
-
-            ZTest Always Cull Off ZWrite Off
-            Blend One [_DstBlend]
-
-            HLSLPROGRAM
-
-            #define OVERRIDE_SPLAT_SAMPLER_NAME sampler_Normal0
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/TerrainLit/TerrainLit_Splatmap.hlsl"
-
-            float2 Frag(Varyings input) : SV_Target
-            {
-                TerrainLitSurfaceData surfaceData;
-                InitializeTerrainLitSurfaceData(surfaceData);
-                TerrainSplatBlend(input.texcoord.zw, input.texcoord.xy, surfaceData);
-                return surfaceData.normalData.xy; // RT format is supposed to be floating point
             }
 
             ENDHLSL

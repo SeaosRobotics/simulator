@@ -115,4 +115,22 @@ namespace Simulator.Bridge.Ros.Autoware
         public Header header;
         public DetectedObject[] objects;
     }
+
+    [MessageType("autoware_auto_msgs/VehicleControlCommand")]
+    public class VehicleControlCommand
+    {
+        public Time stamp;
+        public float long_accel_mps2;
+        public float front_wheel_angle_rad;
+        public double rear_wheel_angle_rad;
+    }
+
+    [MessageType("autoware_auto_msgs/VehicleOdometry")]
+    public class VehicleOdometry
+    {
+        public Time stamp;
+        public float velocity_mps;
+        public float front_wheel_angle_rad;
+        public float rear_wheel_angle_rad;
+    }
 }

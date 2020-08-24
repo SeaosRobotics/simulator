@@ -8,10 +8,14 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Simulator;
 using UnityEngine;
 using UnityEngine.AI;
 using Simulator.Api;
 using Simulator.Map;
+using Simulator.Network.Core.Components;
+using Simulator.Network.Core.Identification;
+using Simulator.Network.Core.Messaging.Data;
 using Simulator.Utilities;
 
 public enum PedestrianState
@@ -22,7 +26,7 @@ public enum PedestrianState
     Crossing
 };
 
-public class PedestrianController : MonoBehaviour
+public class PedestrianController : DistributedComponent, IGloballyUniquelyIdentified
 {
     public enum ControlType
     {
@@ -69,7 +73,21 @@ public class PedestrianController : MonoBehaviour
     private Vector3 LastRBPosition;
     private Quaternion LastRBRotation;
     public uint GTID { get; set; }
+    public string GUID { get; set; }
     public Bounds Bounds;
+
+    public PedestrianState ThisPedState
+    {
+        get => thisPedState;
+        set
+        {
+            if (thisPedState == value)
+                return;
+            thisPedState = value;
+            if (Loader.Instance.Network.IsMaster)
+                BroadcastSnapshot();
+        }
+    }
 
     private enum CoroutineID
     {
@@ -86,7 +104,7 @@ public class PedestrianController : MonoBehaviour
         if (!enable)
         {
             Control = ControlType.Manual;
-            thisPedState = PedestrianState.None;
+            ThisPedState = PedestrianState.None;
             return;
         }
 
@@ -97,7 +115,7 @@ public class PedestrianController : MonoBehaviour
         float closestDistance = float.MaxValue;
         int closestIndex = 0;
 
-        foreach (var path in SimulatorManager.Instance.PedestrianManager.pedPaths)
+        foreach (var path in SimulatorManager.Instance.MapManager.pedestrianLanes)
         {
             for (int i = 0; i < path.mapWorldPositions.Count; i++)
             {
@@ -135,10 +153,10 @@ public class PedestrianController : MonoBehaviour
         waypointLoop = loop;
     }
 
-    public void InitManual(Vector3 position, Quaternion rotation, int seed)
+    public void InitManual(PedestrianManager.PedSpawnData data)
     {
         FixedUpdateManager = SimulatorManager.Instance.FixedUpdateManager;
-        RandomGenerator = new System.Random(seed);
+        RandomGenerator = new System.Random(data.Seed);
         Path = new NavMeshPath();
 
         agent = GetComponent<NavMeshAgent>();
@@ -150,15 +168,15 @@ public class PedestrianController : MonoBehaviour
 
         agent.updatePosition = false;
         agent.updateRotation = false;
-        agent.Warp(position);
-        agent.transform.rotation = rotation;
+        agent.Warp(data.Position);
+        agent.transform.rotation = data.Rotation;
 
-        thisPedState = PedestrianState.None;
+        ThisPedState = PedestrianState.None;
         Control = ControlType.Manual;
     }
     #endregion
 
-    public void InitPed(List<Vector3> pedSpawnerTargets, int seed)
+    public void InitPed(Vector3 position, List<Vector3> pedSpawnerTargets, int seed)
     {
         FixedUpdateManager = SimulatorManager.Instance.FixedUpdateManager;
         RandomGenerator = new System.Random(seed);
@@ -175,14 +193,9 @@ public class PedestrianController : MonoBehaviour
 
         agent.avoidancePriority = RandomGenerator.Next(1, 100); // set to 0 for no avoidance
 
-        // get random pos index
-        CurrentTargetIndex = RandomGenerator.Next(targets.Count);
-        NextTargetIndex = GetNextTargetIndex(CurrentTargetIndex);
-        var initPos = GetRandomTargetPosition(CurrentTargetIndex);
-
         agent.updatePosition = false;
         agent.updateRotation = false;
-        agent.Warp(initPos);
+        agent.Warp(position);
         agent.transform.rotation = Quaternion.identity;
     }
 
@@ -223,7 +236,7 @@ public class PedestrianController : MonoBehaviour
                 Coroutines[(int)CoroutineID.ChangePedState] = FixedUpdateManager.StartCoroutine(ChangePedState());
             }
 
-            if (thisPedState == PedestrianState.Idle)
+            if (ThisPedState == PedestrianState.Idle)
             {
                 CurrentTurn = Vector3.zero;
                 CurrentSpeed = 0f;
@@ -248,7 +261,7 @@ public class PedestrianController : MonoBehaviour
 
                 CurrentTurn = direction;
                 CurrentSpeed = LinearSpeed;
-                thisPedState = PedestrianState.Walking;
+                ThisPedState = PedestrianState.Walking;
 
                 if (direction.magnitude < Accuracy)
                 {
@@ -262,6 +275,7 @@ public class PedestrianController : MonoBehaviour
                     }
                 }
             }
+            EvaluateDistanceFromFocus();
         }
         else if (Control == ControlType.Waypoints)
         {
@@ -280,7 +294,7 @@ public class PedestrianController : MonoBehaviour
 
     private void EvaluateWaypointTarget()
     {
-        if (thisPedState == PedestrianState.Idle)
+        if (ThisPedState == PedestrianState.Idle)
         {
             CurrentTurn = Vector3.zero;
             CurrentSpeed = 0f;
@@ -305,7 +319,7 @@ public class PedestrianController : MonoBehaviour
 
             CurrentTurn = direction;
             CurrentSpeed = LinearSpeed;
-            thisPedState = PedestrianState.Walking;
+            ThisPedState = PedestrianState.Walking;
 
             if (direction.magnitude < Accuracy)
             {
@@ -324,10 +338,10 @@ public class PedestrianController : MonoBehaviour
 
                     if (CurrentTriggerDistance > 0f)
                     {
-                        thisPedState = PedestrianState.Idle;
+                        ThisPedState = PedestrianState.Idle;
                         Coroutines[(int)CoroutineID.WaitForAgent] = FixedUpdateManager.StartCoroutine(EvaluateEgoToTrigger(NextTargetPos, CurrentTriggerDistance));
                     }
-                    else if (thisPedState == PedestrianState.Walking && CurrentIdle > 0f)
+                    else if (ThisPedState == PedestrianState.Walking && CurrentIdle > 0f)
                     {
                         Coroutines[(int)CoroutineID.IdleAnimation] = FixedUpdateManager.StartCoroutine(IdleAnimation(CurrentIdle));
                     }
@@ -349,10 +363,10 @@ public class PedestrianController : MonoBehaviour
         {
             for (int i = 0; i < players.Count; i++)
             {
-                if (Vector3.Distance(players[i].transform.position, pos) < dist)
+                if (Vector3.Distance(players[i].AgentGO.transform.position, pos) < dist)
                 {
                     CurrentTriggerDistance = 0;
-                    thisPedState = PedestrianState.Walking;
+                    ThisPedState = PedestrianState.Walking;
                     yield break;
                 }
             }
@@ -422,16 +436,16 @@ public class PedestrianController : MonoBehaviour
             yield break;
         }
 
-        thisPedState = PedestrianState.Idle;
+        ThisPedState = PedestrianState.Idle;
 
         yield return FixedUpdateManager.WaitForFixedSeconds(duration);
 
-        thisPedState = PedestrianState.Walking;
+        ThisPedState = PedestrianState.Walking;
     }
 
     private bool IsRandomIdle()
     {
-        if (RandomGenerator.Next(1000) < 1 && thisPedState == PedestrianState.Walking)
+        if (RandomGenerator.Next(1000) < 1 && ThisPedState == PedestrianState.Walking)
         {
             return true;
         }
@@ -442,14 +456,10 @@ public class PedestrianController : MonoBehaviour
     {
         if (agent == null || anim == null) return;
 
-        if (thisPedState == PedestrianState.Walking || thisPedState == PedestrianState.Crossing)
-        {
+        if (ThisPedState == PedestrianState.Walking || ThisPedState == PedestrianState.Crossing) 
             anim.SetFloat("speed", LinearSpeed);
-        }
-        else
-        {
-            anim.SetFloat("speed", 0f);
-        }
+        else 
+            anim.SetFloat("speed", 0.0f);
     }
 
     private int GetNextTargetIndex(int index)
@@ -459,11 +469,15 @@ public class PedestrianController : MonoBehaviour
 
     private Vector3 GetRandomTargetPosition(int index)
     {
-        Vector3 tempV = targets[index];
+        Vector3 tempV = Vector3.zero;
+        if (targets.Count > 0 && index >= 0 && index < targets.Count)
+        {
+            tempV = targets[index];
+        }
 
         int count = 0;
         bool isInNavMesh = false;
-        while (!isInNavMesh || count > 10000)
+        while (!isInNavMesh && count < 10000)
         {
             Vector3 randomPoint = tempV + RandomGenerator.InsideUnitSphere() * targetRange;
             NavMeshHit hit;
@@ -494,7 +508,18 @@ public class PedestrianController : MonoBehaviour
         StopPEDCoroutines();
         Path.ClearCorners();
         CurrentWP = 0;
-        thisPedState = PedestrianState.None;
+        ThisPedState = PedestrianState.None;
+    }
+
+    private void EvaluateDistanceFromFocus()
+    {
+        if (SimulatorManager.Instance.IsAPI)
+            return;
+
+        if (!SimulatorManager.Instance.PedestrianManager.WithinSpawnArea(transform.position) && !SimulatorManager.Instance.PedestrianManager.IsVisible(gameObject))
+        {
+            SimulatorManager.Instance.PedestrianManager.DespawnPed(this);
+        }
     }
 
     void OnCollisionEnter(Collision collision)
@@ -502,7 +527,25 @@ public class PedestrianController : MonoBehaviour
         if (collision.gameObject.layer == LayerMask.NameToLayer("Agent"))
         {
             ApiManager.Instance?.AddCollision(gameObject, collision.gameObject, collision);
+            SimulatorManager.Instance.AnalysisManager.IncrementPedCollision();
             SIM.LogSimulation(SIM.Simulation.NPCCollision);
         }
     }
+
+    #region network
+    protected override string ComponentKey { get; } = "PedestrianController";
+
+    protected override void PushSnapshot(BytesStack messageContent)
+    {
+        messageContent.PushEnum<PedestrianState>((int)ThisPedState);
+    }
+
+    protected override void ApplySnapshot(DistributedMessage distributedMessage)
+    {
+        ThisPedState = distributedMessage.Content.PopEnum<PedestrianState>();
+        //Validate animator, as snapshot can be received before it is initialized
+        if (anim != null && anim.isActiveAndEnabled && anim.runtimeAnimatorController!=null)
+            SetAnimationControllerParameters();
+    }
+    #endregion
 }

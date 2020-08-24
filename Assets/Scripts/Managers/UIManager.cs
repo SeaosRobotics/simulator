@@ -17,6 +17,7 @@ using Simulator.Sensors;
 using Simulator.Components;
 using System.Text;
 using System.Collections.Concurrent;
+using System.Linq;
 
 public class UIManager : MonoBehaviour
 {
@@ -42,12 +43,14 @@ public class UIManager : MonoBehaviour
     [Space(5, order = 0)]
     [Header("Simulator", order = 1)]
     public Canvas SimulatorCanvas;
+    public Image cinematicFadeImage;
     public GameObject MenuHolder;
     public GameObject ControlsPanel;
     public GameObject InfoPanel;
     public GameObject EnvironmentPanel;
     public GameObject VisualizerPanel;
     public GameObject BridgePanel;
+    public Button MenuButton;
     public Button PauseButton;
     public Button CloseButton;
     public Button InfoButton;
@@ -55,6 +58,8 @@ public class UIManager : MonoBehaviour
     public Button ControlsButton;
     public Button EnvironmentButton;
     public Button VisualizerButton;
+    public Button ResetButton;
+    public Button DisableAllButton;
     public Button BridgeButton;
     public Text PlayText;
     public Text PauseText;
@@ -66,7 +71,9 @@ public class UIManager : MonoBehaviour
     public Transform BridgeContent;
     private BridgeClient BridgeClient;
     private Text BridgeClientStatusText;
-    private Dictionary<string, Text> CurrentBridgeInfo = new Dictionary<string, Text>();
+    private bool paused = false;
+    private Dictionary<string, Text> CurrentBridgePublisherInfo = new Dictionary<string, Text>();
+    private Dictionary<string, Text> CurrentBridgeSubscriberInfo = new Dictionary<string, Text>();
 
     [Space(10)]
 
@@ -93,9 +100,11 @@ public class UIManager : MonoBehaviour
     public VisualizerToggle VisualizerTogglePrefab;
     public Transform VisualizerContent;
     public GameObject VisualizerCanvasGO;
+    private GridLayoutGroup VisualizerGridLayoutGroup;
     public Visualizer VisualizerPrefab;
     private List<VisualizerToggle> visualizerToggles = new List<VisualizerToggle>();
     private List<Visualizer> visualizers = new List<Visualizer>();
+    private bool allVisualizersActive = false;
 
     [Space(10)]
 
@@ -111,6 +120,7 @@ public class UIManager : MonoBehaviour
     public Text LockedText;
     public Text UnlockedText;
     public Text CinematicText;
+    public Text CameraStateText;
 
     private StringBuilder sb = new StringBuilder();
 
@@ -126,25 +136,39 @@ public class UIManager : MonoBehaviour
             ControlsButtonOnClick();
         }
     }
-    
+
+    private void Awake()
+    {
+        VisualizerGridLayoutGroup = VisualizerCanvasGO.GetComponent<GridLayoutGroup>();
+        ResetCinematicAlpha();
+    }
+
     private void Start()
     {
         PauseButton.gameObject.SetActive(false);
         EnvironmentButton.gameObject.SetActive(false);
+        MenuHolder.SetActive(false);
 
         var config = Loader.Instance?.SimConfig;
         if (config != null)
         {
-            if (config.Headless)
+            if (config.Headless) //TODO api and headless? reset?
             {
                 LoaderUICanvas.gameObject.SetActive(true);
                 SimulatorCanvas.gameObject.SetActive(false);
                 SimulatorManager.Instance.CameraManager.SimulatorCamera.cullingMask = 1  << LayerMask.NameToLayer("UI");
-                StopButton.onClick.AddListener(StopButtonOnClick);
             }
 
-            PauseButton.gameObject.SetActive(config.Interactive);
+            var usePauseButton = config.Interactive;
+            PauseButton.gameObject.SetActive(usePauseButton);
+            if (usePauseButton)
+            {
+                PauseSimulation();
+                SimulatorManager.Instance.TimeManager.TimeScaleSemaphore.LocksCountChanged += UpdatePauseButton;
+            }
+
             EnvironmentButton.gameObject.SetActive(config.Interactive);
+            MenuHolder.SetActive(config.Interactive);
 
             if (config.Interactive)
             {
@@ -163,7 +187,6 @@ public class UIManager : MonoBehaviour
                 // set toggles
                 NPCToggle.isOn = config.UseTraffic;
                 PedestrianToggle.isOn = config.UsePedestrians;
-                PauseButton.onClick.AddListener(PauseButtonOnClick);
             }
         }
 
@@ -172,22 +195,22 @@ public class UIManager : MonoBehaviour
         PlayText.gameObject.SetActive(Time.timeScale == 0f ? true : false);
         PauseText.gameObject.SetActive(Time.timeScale == 0f ? false : true);
 
+        MenuButton.onClick.AddListener(MenuButtonOnClick);
+        StopButton.onClick.AddListener(StopButtonOnClick);
         CloseButton.onClick.AddListener(CloseButtonOnClick);
+        PauseButton.onClick.AddListener(PauseButtonOnClick);
         InfoButton.onClick.AddListener(InfoButtonOnClick);
         ClearButton.onClick.AddListener(ClearButtonOnClick);
         ControlsButton.onClick.AddListener(ControlsButtonOnClick);
         EnvironmentButton.onClick.AddListener(EnvironmentButtonOnClick);
         VisualizerButton.onClick.AddListener(VisualizerButtonOnClick);
+        ResetButton.onClick.AddListener(ResetOnClick);
+        DisableAllButton.onClick.AddListener(DisableAllOnClick);
         BridgeButton.onClick.AddListener(BridgeButtonOnClick);
         AgentDropdown.onValueChanged.AddListener(OnAgentSelected);
         CameraButton.onClick.AddListener(CameraButtonOnClick);
 
-        LockedText.gameObject.SetActive(true);
-        UnlockedText.gameObject.SetActive(false);
-        CinematicText.gameObject.SetActive(false);
-
-        SetCurrentPanel();
-        SetAgentDropdown();
+        SetCameraButtonState();
     }
 
     private void Update()
@@ -225,6 +248,7 @@ public class UIManager : MonoBehaviour
 
     private void OnDestroy()
     {
+        MenuButton.onClick.RemoveListener(MenuButtonOnClick);
         StopButton.onClick.RemoveListener(StopButtonOnClick);
         PauseButton.onClick.RemoveListener(PauseButtonOnClick);
         InfoButton.onClick.RemoveListener(InfoButtonOnClick);
@@ -232,15 +256,30 @@ public class UIManager : MonoBehaviour
         ControlsButton.onClick.RemoveListener(ControlsButtonOnClick);
         EnvironmentButton.onClick.RemoveListener(EnvironmentButtonOnClick);
         VisualizerButton.onClick.RemoveListener(VisualizerButtonOnClick);
+        ResetButton.onClick.RemoveListener(ResetOnClick);
+        DisableAllButton.onClick.RemoveListener(DisableAllOnClick);
         BridgeButton.onClick.RemoveListener(BridgeButtonOnClick);
         AgentDropdown.onValueChanged.RemoveListener(OnAgentSelected);
         CameraButton.onClick.RemoveListener(CameraButtonOnClick);
         CloseButton.onClick.RemoveListener(CloseButtonOnClick);
+        if (Loader.Instance != null && Loader.Instance.SimConfig != null) // TODO fix for Editor needs SimConfig
+        {
+            if (Loader.Instance.SimConfig.Interactive)
+                SimulatorManager.Instance.TimeManager.TimeScaleSemaphore.LocksCountChanged -= UpdatePauseButton;
+        }
+            
+    }
+
+    public void Reset() //api
+    {
+        SetCameraButtonState();
+        CloseButtonOnClick();
     }
 
     public void SetCameraButtonState()
     {
         var current = SimulatorManager.Instance.CameraManager.GetCurrentCameraState();
+        CameraStateText.text = current.ToString();
         switch (current)
         {
             case CameraStateType.Free:
@@ -266,12 +305,16 @@ public class UIManager : MonoBehaviour
         SimulatorManager.Instance.CameraManager.ToggleCameraState();
     }
 
-    private void SetAgentDropdown()
+    public void SetAgentsDropdown()
     {
+        AgentDropdown.options.Clear();
+        AgentDropdown.ClearOptions();
         for (int i = 0; i < SimulatorManager.Instance.AgentManager.ActiveAgents.Count; i++)
         {
-            AgentDropdown.options.Add(new Dropdown.OptionData((i + 1) + " - " + SimulatorManager.Instance.AgentManager.ActiveAgents[i].name));
+            AgentDropdown.options.Add(new Dropdown.OptionData((i + 1) + " - " + SimulatorManager.Instance.AgentManager.ActiveAgents[i].AgentGO.name));
         }
+        AgentDropdown.value = SimulatorManager.Instance.AgentManager.GetCurrentActiveAgentIndex();
+        AgentDropdown.RefreshShownValue();
     }
 
     public void OnAgentSelected(int value)
@@ -348,7 +391,8 @@ public class UIManager : MonoBehaviour
 
     private void SetAgentBridgeInfo(GameObject agent)
     {
-        CurrentBridgeInfo.Clear();
+        CurrentBridgePublisherInfo.Clear();
+        CurrentBridgeSubscriberInfo.Clear();
         BridgeClient = null;
         BridgeClientStatusText = null;
         var temp = BridgeContent.GetComponentsInChildren<InfoTextOnClick>();
@@ -363,7 +407,7 @@ public class UIManager : MonoBehaviour
             CreateBridgeInfo($"Vehicle: {agent.name}");
             CreateBridgeInfo($"Bridge Status: {BridgeClient.BridgeStatus}", true);
             CreateBridgeInfo($"Address: {BridgeClient.PrettyAddress.ToString()}");
-            
+
             foreach (var pub in BridgeClient.Bridge.TopicPublishers)
             {
                 sb.Clear();
@@ -372,9 +416,12 @@ public class UIManager : MonoBehaviour
                 sb.AppendLine($"Type: {pub.Type}");
                 sb.AppendLine($"Frequency: {pub.Frequency:F2} Hz");
                 sb.AppendLine($"Count: {pub.Count}");
-                CurrentBridgeInfo.Add(pub.Topic, CreateBridgeInfo(sb.ToString()));
+                if (!CurrentBridgePublisherInfo.ContainsKey(pub.Topic))
+                {
+                    CurrentBridgePublisherInfo.Add(pub.Topic, CreateBridgeInfo(sb.ToString()));
+                }
             }
-            
+
             foreach (var sub in BridgeClient.Bridge.TopicSubscriptions)
             {
                 sb.Clear();
@@ -383,7 +430,10 @@ public class UIManager : MonoBehaviour
                 sb.AppendLine($"Type: {sub.Type}");
                 sb.AppendLine($"Frequency: {sub.Frequency:F2} Hz");
                 sb.AppendLine($"Count: {sub.Count}");
-                CurrentBridgeInfo.Add(sub.Topic, CreateBridgeInfo(sb.ToString()));
+                if (!CurrentBridgeSubscriberInfo.ContainsKey(sub.Topic))
+                {
+                    CurrentBridgeSubscriberInfo.Add(sub.Topic, CreateBridgeInfo(sb.ToString()));
+                }
             }
         }
         else
@@ -392,7 +442,7 @@ public class UIManager : MonoBehaviour
             CreateBridgeInfo("Bridge Status: Null");
         }
     }
-    
+
     private Text CreateBridgeInfo(string text, bool isBridgeStatus = false)
     {
         var bridgeInfo = Instantiate(InfoTextPrefab, BridgeContent);
@@ -417,15 +467,16 @@ public class UIManager : MonoBehaviour
             return;
         }
 
-        if (CurrentBridgeInfo == null)
+        if (CurrentBridgePublisherInfo == null && CurrentBridgeSubscriberInfo == null)
         {
             return;
         }
 
         foreach (var pub in BridgeClient.Bridge.TopicPublishers)
         {
-            if (CurrentBridgeInfo.TryGetValue(pub.Topic, out Text ui))
+            if (CurrentBridgePublisherInfo.ContainsKey(pub.Topic))
             {
+                Text ui = CurrentBridgePublisherInfo[pub.Topic];
                 if (pub.ElapsedTime >= 1 && pub.Count > pub.StartCount)
                 {
                     pub.Frequency = (pub.Count - pub.StartCount) / pub.ElapsedTime;
@@ -449,8 +500,9 @@ public class UIManager : MonoBehaviour
 
         foreach (var sub in BridgeClient.Bridge.TopicSubscriptions)
         {
-            if (CurrentBridgeInfo.TryGetValue(sub.Topic, out Text ui))
+            if (CurrentBridgeSubscriberInfo.ContainsKey(sub.Topic))
             {
+                Text ui = CurrentBridgeSubscriberInfo[sub.Topic];
                 if (sub.ElapsedTime >= 1 && sub.Count > sub.StartCount)
                 {
                     sub.Frequency = (sub.Count - sub.StartCount) / sub.ElapsedTime;
@@ -485,11 +537,12 @@ public class UIManager : MonoBehaviour
         }
         visualizerToggles.Clear();
         visualizers.Clear();
+        VisualizerGridLayoutGroup.enabled = true;
         Array.ForEach(agent.GetComponentsInChildren<SensorBase>(), sensor =>
         {
             AddVisualizer(sensor);
         });
-
+        VisualizerGridLayoutGroup.enabled = false;
         SetAgentBridgeInfo(agent);
         AgentDropdown.value = SimulatorManager.Instance.AgentManager.GetCurrentActiveAgentIndex();
     }
@@ -501,16 +554,18 @@ public class UIManager : MonoBehaviour
         EnvironmentPanel.SetActive(EnvironmentPanel.activeInHierarchy ? false : currentPanelType == PanelType.Environment);
         VisualizerPanel.SetActive(VisualizerPanel.activeInHierarchy ? false : currentPanelType == PanelType.Visualizer);
         BridgePanel.SetActive(BridgePanel.activeInHierarchy ? false : currentPanelType == PanelType.Bridge);
-        if (currentPanelType == PanelType.None)
-        {
-            MenuHolder.SetActive(false);
-        }
+    }
+
+    public void MenuButtonOnClick()
+    {
+        MenuHolder.SetActive(!MenuHolder.activeInHierarchy);
     }
 
     private void CloseButtonOnClick()
     {
         currentPanelType = PanelType.None;
         SetCurrentPanel();
+        MenuHolder.SetActive(false);
     }
 
     private void StopButtonOnClick()
@@ -518,12 +573,51 @@ public class UIManager : MonoBehaviour
         Loader.StopAsync();
     }
 
-    private void PauseButtonOnClick()
+    public void PauseButtonOnClick()
     {
-        bool paused = Time.timeScale == 0.0f;
-        SimulatorManager.SetTimeScale(paused ? 1f : 0f);
-        PlayText.gameObject.SetActive(!paused);
-        PauseText.gameObject.SetActive(paused);
+        var interactive = Loader.Instance?.SimConfig?.Interactive;
+        if (interactive == null || interactive == false)
+        {
+            return;
+        }
+
+        if (paused)
+            ContinueSimulation();
+        else
+            PauseSimulation();
+    }
+
+    private void PauseSimulation()
+    {
+        if (paused)
+            return;
+        var timeManager = SimulatorManager.Instance.TimeManager;
+        timeManager.TimeScaleSemaphore.Lock();
+        paused = true;
+        UpdatePauseButton(timeManager.TimeScaleSemaphore.Locks);
+    }
+
+    private void ContinueSimulation()
+    {
+        if (!paused)
+            return;
+        var timeManager = SimulatorManager.Instance.TimeManager;
+        timeManager.TimeScaleSemaphore.Unlock();
+        //TODO integrate all scripts with the lock/unlock timescale and remove setting timescale here
+        if (timeManager.TimeScaleSemaphore.IsUnlocked && Mathf.Approximately(timeManager.TimeScale, 0.0f))
+            timeManager.TimeScale = 1.0f;
+        paused = false;
+        UpdatePauseButton(timeManager.TimeScaleSemaphore.Locks);
+    }
+
+    private void UpdatePauseButton(float timeScaleLocks)
+    {
+        PlayText.gameObject.SetActive(paused);
+        PauseText.gameObject.SetActive(!paused);
+        var externalPause = timeScaleLocks - (paused ? 1 : 0) > 0;
+        PauseButton.interactable = !externalPause;
+        //TODO better visual effect for disabled button
+        (paused ? PlayText : PauseText).color = (externalPause ? new Color(0.3f, 0.3f, 0.3f) : new Color(0.8f, 0.8f, 0.8f));
     }
 
     private void InfoButtonOnClick()
@@ -535,7 +629,7 @@ public class UIManager : MonoBehaviour
     private void ClearButtonOnClick()
     {
         var temp = InfoContent.GetComponentsInChildren<InfoTextOnClick>();
-        
+
         for (int i = 0; i < temp.Length; i++)
         {
             if (!temp[i].BuildInfo)
@@ -547,20 +641,6 @@ public class UIManager : MonoBehaviour
     {
         currentPanelType = PanelType.Controls;
         SetCurrentPanel();
-    }
-
-    public void SetEnvironmentButton(bool state)
-    {
-        // if interactive environment button is active
-        var config = Loader.Instance?.SimConfig;
-        if (config != null && config.Interactive)
-            return;
-
-        EnvironmentButton.gameObject.SetActive(state);
-        if (!state)
-        {
-            EnvironmentPanel.SetActive(false);
-        }
     }
 
     private void EnvironmentButtonOnClick()
@@ -583,7 +663,7 @@ public class UIManager : MonoBehaviour
         currentPanelType = PanelType.Environment;
         SetCurrentPanel();
     }
-    
+
     private void VisualizerButtonOnClick()
     {
         currentPanelType = PanelType.Visualizer;
@@ -595,7 +675,7 @@ public class UIManager : MonoBehaviour
         currentPanelType = PanelType.Bridge;
         SetCurrentPanel();
     }
-    
+
     public void TimeOfDayOnValueChanged(float value)
     {
         if (SimulatorManager.Instance == null) return;
@@ -655,7 +735,7 @@ public class UIManager : MonoBehaviour
         visualizerToggles.Add(tog);
         tog.VisualizerNameText.text = sensor.Name;
         tog.Sensor = sensor;
-        
+
         var vis = Instantiate(VisualizerPrefab, VisualizerCanvasGO.transform);
         visualizers.Add(vis);
         vis.transform.localPosition = Vector2.zero;
@@ -671,13 +751,60 @@ public class UIManager : MonoBehaviour
         }
     }
 
+    private void ResetOnClick()
+    {
+        VisualizerGridLayoutGroup.enabled = true;
+        for (int i = 0; i < visualizers.Count; i++)
+        {
+            visualizers[i].ResetWindow();
+        }
+        foreach (var vis in visualizers)
+        {
+            if (!vis.HeaderGO.activeInHierarchy)
+                vis.transform.SetAsLastSibling();
+        }
+        LayoutRebuilder.ForceRebuildLayoutImmediate(VisualizerCanvasGO.GetComponent<RectTransform>());
+        VisualizerGridLayoutGroup.enabled = false;
+    }
+
+    private void DisableAllOnClick()
+    {
+        visualizers.ForEach(x => x.gameObject.SetActive(false));
+    }
+
+    public void ToggleVisualizers()
+    {
+        allVisualizersActive = !allVisualizersActive;
+        foreach (var vis in visualizers)
+        {
+            vis.gameObject.SetActive(allVisualizersActive);
+        }
+    }
+
     private void RemoveVisualizer(Visualizer visualizer)
     {
         visualizers.Remove(visualizer);
         Destroy(visualizer.gameObject);
+        allVisualizersActive = false;
+
         if (visualizers.Count == 0)
         {
             VisualizerCanvasGO.SetActive(false);
         }
+    }
+
+    public void FadeOutIn(float duration)
+    {
+        cinematicFadeImage.color = Color.black;
+        cinematicFadeImage.canvasRenderer.SetAlpha(0f);
+        cinematicFadeImage.CrossFadeAlpha(1f, duration/2, true);
+        cinematicFadeImage.color = Color.black;
+        cinematicFadeImage.canvasRenderer.SetAlpha(1f);
+        cinematicFadeImage.CrossFadeAlpha(0f, duration/2, true);
+    }
+
+    public void ResetCinematicAlpha()
+    {
+        cinematicFadeImage.color = Color.clear;
     }
 }

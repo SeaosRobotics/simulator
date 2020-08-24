@@ -17,6 +17,7 @@ namespace Simulator.Api.Commands
         public void Execute(JSONNode args)
         {
             var api = ApiManager.Instance;
+            var sim = SimulatorManager.Instance;
 
             var timeScale = args["time_scale"];
             if (timeScale == null || timeScale.IsNull)
@@ -42,6 +43,9 @@ namespace Simulator.Api.Commands
             }
 
             SIM.LogAPI(SIM.API.SimulationRun, timeLimit.ToString());
+            if (sim.NPCManager.startTime == 0f)
+                sim.NPCManager.startTime = sim.CurrentTime;
+            //sim.AnalysisManager.AnalysisInit();
         }
     }
 }

@@ -9,6 +9,7 @@ using UnityEngine;
 using SimpleJSON;
 using System.Collections.Generic;
 using Simulator.Controllable;
+using System.Linq;
 
 namespace Simulator.Api.Commands
 {
@@ -22,7 +23,7 @@ namespace Simulator.Api.Commands
             var position = args["position"].ReadVector3();
             var controlType = args["control_type"].Value;
 
-            List<IControllable> controllables = SimulatorManager.Instance.Controllables;
+            var controllables = api.Controllables.Values.ToList();
             if (!string.IsNullOrEmpty(controlType))
             {
                 controllables = controllables.FindAll(c => c.ControlType == controlType);
@@ -31,19 +32,26 @@ namespace Simulator.Api.Commands
             IControllable controllable = GetClosestControllable(position, controllables);
             if (controllable == null)
             {
-                api.SendError($"Controllable object not found with '{position}'");
+                api.SendError(this, $"Controllable object not found with '{position}'");
             }
 
             api.ControllablesUID.TryGetValue(controllable, out string uid);
 
             JSONArray validActions = new JSONArray();
-            foreach (var state in controllable.ValidStates)
+            if (controllable.ValidStates != null)
             {
-                validActions.Add(state);
+                foreach (var state in controllable.ValidStates)
+                {
+                    validActions.Add(state);
+                }
             }
-            foreach (var action in controllable.ValidActions)
+
+            if (controllable.ValidActions != null)
             {
-                validActions.Add(action);
+                foreach (var action in controllable.ValidActions)
+                {
+                    validActions.Add(action);
+                }
             }
 
             JSONObject j = new JSONObject();
@@ -54,7 +62,7 @@ namespace Simulator.Api.Commands
             j.Add("valid_actions", validActions);
             j.Add("default_control_policy", controllable.DefaultControlPolicy);
 
-            api.SendResult(j);
+            api.SendResult(this, j);
         }
 
         private IControllable GetClosestControllable(Vector3 targetPos, List<IControllable> controllables)

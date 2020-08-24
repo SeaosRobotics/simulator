@@ -12,14 +12,19 @@ using Simulator.Map;
 
 namespace Simulator.Map
 {
-    public class MapClearArea : MapDataPoints
+    public class MapClearArea : MapDataPoints, IMapType
     {
+        public string id
+        {
+            get;
+            set;
+        }
         public override void Draw()
         {
             if (mapLocalPositions.Count < 3) return;
 
-            AnnotationGizmos.DrawWaypoints(transform, mapLocalPositions, MapAnnotationTool.PROXIMITY * 0.5f, clearAreaColor);
-            AnnotationGizmos.DrawLines(transform, mapLocalPositions, clearAreaColor);
+            AnnotationGizmos.DrawWaypoints(transform, mapLocalPositions, MapAnnotationTool.PROXIMITY * 0.5f, clearAreaColor + selectedColor);
+            AnnotationGizmos.DrawLines(transform, mapLocalPositions, clearAreaColor + selectedColor);
             if (MapAnnotationTool.SHOW_HELP)
             {
 #if UNITY_EDITOR

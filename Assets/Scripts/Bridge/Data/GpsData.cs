@@ -23,7 +23,7 @@ namespace Simulator.Bridge.Data
 
         public double Northing;
         public double Easting;
-
+        public double[] PositionCovariance; // 9x9 matrix
         public Quaternion Orientation;
     }
 
@@ -49,6 +49,7 @@ namespace Simulator.Bridge.Data
         public float ForwardSpeed; // m/s
         public Vector3 Velocity;
         public Vector3 AngularVelocity;
+        public float WheelAngle; // rad
     }
 
     public class GpsInsData

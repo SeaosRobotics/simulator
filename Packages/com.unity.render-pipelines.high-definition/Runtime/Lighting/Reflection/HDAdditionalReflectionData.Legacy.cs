@@ -1,4 +1,4 @@
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
     public sealed partial class HDAdditionalReflectionData
     {
@@ -19,6 +19,10 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             }
         }
 
+        /// <summary>
+        /// Prepare the culling phase by settings the appropriate values to the legacy reflection probe component.
+        /// The culling system is driven by the legacy probe's values.
+        /// </summary>
         public override void PrepareCulling()
         {
             base.PrepareCulling();
@@ -43,6 +47,10 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             // But we only want to update the ReflectionProbe.center property
             // So we need to restore the position after the update.
             tr.position = position;
+
+            // Force the legacy system to not update the probe
+            cubeProbe.mode = ReflectionProbeMode.Custom;
+            cubeProbe.refreshMode = ReflectionProbeRefreshMode.ViaScripting;
         }
     }
 }

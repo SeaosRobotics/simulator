@@ -5,7 +5,7 @@
 #ifndef LIGHTDEFINITION_CS_HLSL
 #define LIGHTDEFINITION_CS_HLSL
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.GPULightType:  static fields
+// UnityEngine.Rendering.HighDefinition.GPULightType:  static fields
 //
 #define GPULIGHTTYPE_DIRECTIONAL (0)
 #define GPULIGHTTYPE_POINT (1)
@@ -14,15 +14,23 @@
 #define GPULIGHTTYPE_PROJECTOR_BOX (4)
 #define GPULIGHTTYPE_TUBE (5)
 #define GPULIGHTTYPE_RECTANGLE (6)
+#define GPULIGHTTYPE_DISC (7)
 
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.GPUImageBasedLightingType:  static fields
+// UnityEngine.Rendering.HighDefinition.GPUImageBasedLightingType:  static fields
 //
 #define GPUIMAGEBASEDLIGHTINGTYPE_REFLECTION (0)
 #define GPUIMAGEBASEDLIGHTINGTYPE_REFRACTION (1)
 
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.EnvShapeType:  static fields
+// UnityEngine.Rendering.HighDefinition.CookieMode:  static fields
+//
+#define COOKIEMODE_NONE (0)
+#define COOKIEMODE_CLAMP (1)
+#define COOKIEMODE_REPEAT (2)
+
+//
+// UnityEngine.Rendering.HighDefinition.EnvShapeType:  static fields
 //
 #define ENVSHAPETYPE_NONE (0)
 #define ENVSHAPETYPE_BOX (1)
@@ -30,24 +38,17 @@
 #define ENVSHAPETYPE_SKY (3)
 
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.EnvConstants:  static fields
+// UnityEngine.Rendering.HighDefinition.EnvConstants:  static fields
 //
 #define ENVCONSTANTS_SPEC_CUBE_LOD_STEP (6)
 
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.EnvCacheType:  static fields
+// UnityEngine.Rendering.HighDefinition.EnvCacheType:  static fields
 //
 #define ENVCACHETYPE_TEXTURE2D (0)
 #define ENVCACHETYPE_CUBEMAP (1)
 
-//
-// UnityEngine.Experimental.Rendering.HDPipeline.StencilLightingUsage:  static fields
-//
-#define STENCILLIGHTINGUSAGE_NO_LIGHTING (0)
-#define STENCILLIGHTINGUSAGE_SPLIT_LIGHTING (1)
-#define STENCILLIGHTINGUSAGE_REGULAR_LIGHTING (2)
-
-// Generated from UnityEngine.Experimental.Rendering.HDPipeline.DirectionalLightData
+// Generated from UnityEngine.Rendering.HighDefinition.DirectionalLightData
 // PackingRules = Exact
 struct DirectionalLightData
 {
@@ -55,26 +56,37 @@ struct DirectionalLightData
     uint lightLayers;
     float lightDimmer;
     float volumetricLightDimmer;
-    float angleScale;
-    float angleOffset;
     float3 forward;
-    int cookieIndex;
+    int cookieMode;
+    float4 cookieScaleOffset;
     float3 right;
-    int tileCookie;
-    float3 up;
     int shadowIndex;
-    float3 color;
+    float3 up;
     int contactShadowIndex;
+    float3 color;
+    int contactShadowMask;
+    float3 shadowTint;
     float shadowDimmer;
     float volumetricShadowDimmer;
     int nonLightMappedOnly;
-    float minRoughness;
-    float4 shadowMaskSelector;
+    real minRoughness;
+    int screenSpaceShadowIndex;
+    real4 shadowMaskSelector;
     float diffuseDimmer;
     float specularDimmer;
+    float penumbraTint;
+    float isRayTracedContactShadow;
+    float distanceFromCamera;
+    float angularDiameter;
+    float flareFalloff;
+    float __unused__;
+    float3 flareTint;
+    float flareSize;
+    float3 surfaceTint;
+    float4 surfaceTextureScaleOffset;
 };
 
-// Generated from UnityEngine.Experimental.Rendering.HDPipeline.LightData
+// Generated from UnityEngine.Rendering.HighDefinition.LightData
 // PackingRules = Exact
 struct LightData
 {
@@ -82,31 +94,38 @@ struct LightData
     uint lightLayers;
     float lightDimmer;
     float volumetricLightDimmer;
-    float angleScale;
-    float angleOffset;
+    real angleScale;
+    real angleOffset;
     float3 forward;
     int lightType;
     float3 right;
-    float range;
+    real range;
     float3 up;
     float rangeAttenuationScale;
     float3 color;
     float rangeAttenuationBias;
+    int cookieMode;
     int cookieIndex;
-    int tileCookie;
     int shadowIndex;
-    int contactShadowIndex;
+    float4 cookieScaleOffset;
+    int contactShadowMask;
+    float3 shadowTint;
     float shadowDimmer;
     float volumetricShadowDimmer;
     int nonLightMappedOnly;
-    float minRoughness;
-    float4 shadowMaskSelector;
-    float2 size;
+    real minRoughness;
+    int screenSpaceShadowIndex;
+    real4 shadowMaskSelector;
+    real4 size;
     float diffuseDimmer;
     float specularDimmer;
+    float isRayTracedContactShadow;
+    float penumbraTint;
+    float3 padding;
+    float boxLightSafeExtent;
 };
 
-// Generated from UnityEngine.Experimental.Rendering.HDPipeline.EnvLightData
+// Generated from UnityEngine.Rendering.HighDefinition.EnvLightData
 // PackingRules = Exact
 struct EnvLightData
 {
@@ -114,7 +133,7 @@ struct EnvLightData
     float3 capturePositionRWS;
     int influenceShapeType;
     float3 proxyExtents;
-    float minProjectionDistance;
+    real minProjectionDistance;
     float3 proxyPositionRWS;
     float3 proxyForward;
     float3 proxyUp;
@@ -129,10 +148,11 @@ struct EnvLightData
     float3 blendDistanceNegative;
     float3 blendNormalDistancePositive;
     float3 blendNormalDistanceNegative;
-    float3 boxSideFadePositive;
-    float3 boxSideFadeNegative;
+    real3 boxSideFadePositive;
+    real3 boxSideFadeNegative;
     float weight;
     float multiplier;
+    float rangeCompressionFactorCompensation;
     int envIndex;
 };
 

@@ -37,6 +37,8 @@ namespace Simulator.Sensors
         private Dictionary<Collider, DetectedRadarObject> Detected = new Dictionary<Collider, DetectedRadarObject>();
         private Dictionary<Collider, Box> Visualized = new Dictionary<Collider, Box>();
         
+        public override SensorDistributionType DistributionType => SensorDistributionType.HighLoad;
+        
         struct Box
         {
             public Vector3 Size;
@@ -50,6 +52,7 @@ namespace Simulator.Sensors
             {
                 radar.Init();
             }
+            SimulatorManager.Instance.NPCManager.RegisterDespawnCallback(OnExitRange);
         }
 
         private void Start()
@@ -148,7 +151,17 @@ namespace Simulator.Sensors
             }
         }
 
+        void OnExitRange(NPCController controller)
+        {
+            OnExitRange(controller.MainCollider);
+        }
+
         void OnExitRange(Collider other, RadarMesh radar)
+        {
+            OnExitRange(other);
+        }
+
+        void OnExitRange(Collider other)
         {
             if (Detected.ContainsKey(other))
                 Detected.Remove(other);
@@ -253,7 +266,7 @@ namespace Simulator.Sensors
             Vector3 velocity = Vector3.zero;
             var npc = col.GetComponent<NPCController>();
             if (npc != null)
-                velocity = npc.currentVelocity;
+                velocity = npc.simpleVelocity;
             var ped = col.GetComponent<NavMeshAgent>();
             if (ped != null)
                 velocity = ped.desiredVelocity;
@@ -288,5 +301,17 @@ namespace Simulator.Sensors
         }
 
         public override void OnVisualizeToggle(bool state) {}
+
+        public override bool CheckVisible(Bounds bounds)
+        {
+            var visible = false;
+            foreach (var radar in radars)
+            {
+                visible = radar.RadarMeshRenderer.bounds.Contains(bounds.center);
+                if (visible)
+                    break;
+            }
+            return visible;
+        }
     }
 }

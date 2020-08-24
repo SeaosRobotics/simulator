@@ -1,7 +1,7 @@
 using UnityEngine;
-using UnityEngine.Experimental.Rendering.HDPipeline;
+using UnityEngine.Rendering.HighDefinition;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline
+namespace UnityEditor.Rendering.HighDefinition
 {
     sealed partial class HDReflectionProbeEditor
     {
@@ -48,13 +48,13 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
                 GUILayout.FlexibleSpace();
                 Color prevColor = GUI.color;
                 GUI.color = new Color(1, 1, 1, 0.5f);
-                GUILayout.Label("Reflection Probe not baked yet");
+                GUILayout.Label("There is no Texture available for the Reflection Probe. Either use Baked and bake a Texture in, use Custom and assign a Texture, or enable Realtime.");
                 GUI.color = prevColor;
                 GUILayout.FlexibleSpace();
                 GUILayout.EndHorizontal();
                 return;
             }
-            
+
             Texture tex = GetTexture(this, target);
             if (tex != null && targets.Length == 1)
                 m_CubemapEditor.DrawPreview(position);

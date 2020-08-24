@@ -1,24 +1,37 @@
 using System;
 using UnityEngine.Serialization;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
     public partial class HDAdditionalCameraData : IVersionable<HDAdditionalCameraData.Version>
     {
+        /// <summary>
+        /// Define migration versions of the HDAdditionalCameraData
+        /// </summary>
         protected enum Version
         {
+            /// <summary>Version Step.</summary>
             None,
+            /// <summary>Version Step.</summary>
             First,
+            /// <summary>Version Step.</summary>
             SeparatePassThrough,
+            /// <summary>Version Step.</summary>
             UpgradingFrameSettingsToStruct,
+            /// <summary>Version Step.</summary>
             AddAfterPostProcessFrameSetting,
-            AddFrameSettingSpecularLighting
+            /// <summary>Version Step.</summary>
+            AddFrameSettingSpecularLighting, // Not used anymore
+            /// <summary>Version Step.</summary>
+            AddReflectionSettings,
+            /// <summary>Version Step.</summary>
+            AddCustomPostprocessAndCustomPass,
         }
 
         [SerializeField, FormerlySerializedAs("version")]
-        Version m_Version;
+        Version m_Version = MigrationDescription.LastVersion<Version>();
 
-        protected static readonly MigrationDescription<Version, HDAdditionalCameraData> k_Migration = MigrationDescription.New(
+        static readonly MigrationDescription<Version, HDAdditionalCameraData> k_Migration = MigrationDescription.New(
             MigrationStep.New(Version.SeparatePassThrough, (HDAdditionalCameraData data) =>
             {
 #pragma warning disable 618 // Type or member is obsolete
@@ -50,9 +63,13 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             {
                 FrameSettings.MigrateToAfterPostprocess(ref data.renderingPathCustomFrameSettings);
             }),
-            MigrationStep.New(Version.AddFrameSettingSpecularLighting, (HDAdditionalCameraData data) =>
-                FrameSettings.MigrateToSpecularLighting(ref data.renderingPathCustomFrameSettings)
-            )
+            MigrationStep.New(Version.AddReflectionSettings, (HDAdditionalCameraData data) =>
+                FrameSettings.MigrateToDefaultReflectionSettings(ref data.renderingPathCustomFrameSettings)
+            ),
+            MigrationStep.New(Version.AddCustomPostprocessAndCustomPass, (HDAdditionalCameraData data) =>
+            {
+                FrameSettings.MigrateToCustomPostprocessAndCustomPass(ref data.renderingPathCustomFrameSettings);
+            })
         );
 
         Version IVersionable<Version>.version { get => m_Version; set => m_Version = value; }

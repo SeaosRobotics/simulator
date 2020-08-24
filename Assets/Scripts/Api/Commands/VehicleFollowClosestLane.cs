@@ -27,24 +27,25 @@ namespace Simulator.Api.Commands
                 var npc = obj.GetComponent<NPCController>();
                 if (npc == null)
                 {
-                    api.SendError($"Agent '{uid}' is not a NPC agent");
+                    api.SendError(this, $"Agent '{uid}' is not a NPC agent");
                     return;
                 }
 
                 if (follow)
                 {
-                    npc.SetFollowClosestLane(maxSpeed, isLaneChange);
+                    var laneFollow = npc.SetBehaviour<NPCLaneFollowBehaviour>();
+                    laneFollow.SetFollowClosestLane(maxSpeed, isLaneChange);
                 }
                 else
                 {
-                    npc.SetManualControl();
+                    npc.SetBehaviour<NPCManualBehaviour>();
                 }
 
-                api.SendResult();
+                api.SendResult(this);
             }
             else
             {
-                api.SendError($"Agent '{uid}' not found");
+                api.SendError(this, $"Agent '{uid}' not found");
             }
         }
     }

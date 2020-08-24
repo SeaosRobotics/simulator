@@ -3,7 +3,9 @@
 #ifndef UNITY_SHADER_VARIABLES_INCLUDED
 #define UNITY_SHADER_VARIABLES_INCLUDED
 
-#include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderConfig.cs.hlsl"
+#include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Version.hlsl"
+#include "Packages/com.unity.render-pipelines.high-definition-config/Runtime/ShaderConfig.cs.hlsl"
+
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/TextureXR.hlsl"
 
 // CAUTION:
@@ -12,12 +14,40 @@
 // This need to be fixed.
 
 #if defined(USING_STEREO_MATRICES)
-    #define _WorldSpaceCameraPos _WorldSpaceCameraPosStereo[unity_StereoEyeIndex].xyz
-    #define _WorldSpaceCameraPosEyeOffset _WorldSpaceCameraPosStereoEyeOffset[unity_StereoEyeIndex].xyz
-    #define _PrevCamPosRWS _PrevCamPosRWSStereo[unity_StereoEyeIndex].xyz
+    #define _WorldSpaceCameraPos            _XRWorldSpaceCameraPos[unity_StereoEyeIndex].xyz
+    #define _WorldSpaceCameraPosViewOffset  _XRWorldSpaceCameraPosViewOffset[unity_StereoEyeIndex].xyz
+    #define _PrevCamPosRWS                  _XRPrevWorldSpaceCameraPos[unity_StereoEyeIndex].xyz
 #endif
 
 #define UNITY_LIGHTMODEL_AMBIENT (glstate_lightmodel_ambient * 2)
+
+// This only defines the ray tracing macro on the platforms that support ray tracing this should be dx12
+#if (SHADEROPTIONS_RAYTRACING && (defined(SHADER_API_D3D11) || defined(SHADER_API_D3D12)) && !defined(SHADER_API_XBOXONE) && !defined(SHADER_API_PSSL))
+#define RAYTRACING_ENABLED (1)
+#define DirectionalShadowType float3
+#else
+#define RAYTRACING_ENABLED (0)
+#define DirectionalShadowType float
+#endif
+
+#if defined(SHADER_STAGE_RAY_TRACING)
+// FXC Supports the naïve "recursive" concatenation, while DXC and C do not https://github.com/pfultz2/Cloak/wiki/C-Preprocessor-tricks,-tips,-and-idioms
+// However, FXC does not support the proper pattern (the one bellow), so we only override it in the case of ray tracing subshaders for the moment. 
+// Note that this should be used for all shaders when DX12 used DXC for vert/frag shaders (which it does not for the moment)
+#undef MERGE_NAME
+#define MERGE_NAME_CONCAT(Name, ...) Name ## __VA_ARGS__
+#define MERGE_NAME(X, Y) MERGE_NAME_CONCAT(X, Y)
+
+#define RAY_TRACING_OPTIONAL_PARAMETERS , IntersectionVertex intersectionVertex, RayCone rayCone, out bool alphaTestResult
+#define GENERIC_ALPHA_TEST(alphaValue, alphaCutoffValue) DoAlphaTest(alphaValue, alphaCutoffValue, alphaTestResult); if (!alphaTestResult) {alphaTestResult = false; return;}
+#define RAY_TRACING_OPTIONAL_ALPHA_TEST_PASS alphaTestResult = true;
+#else
+#define RAY_TRACING_OPTIONAL_PARAMETERS
+#define GENERIC_ALPHA_TEST(alphaValue, alphaCutoffValue) DoAlphaTest(alphaValue, alphaCutoffValue);
+#define RAY_TRACING_OPTIONAL_ALPHA_TEST_PASS
+#endif
+
+
 
 // ----------------------------------------------------------------------------
 
@@ -86,6 +116,10 @@ SAMPLER(sampler_CameraDepthTexture);
 // Color pyramid (width, height, lodcount, Unused)
 TEXTURE2D_X(_ColorPyramidTexture);
 
+// Custom pass buffer
+TEXTURE2D_X(_CustomDepthTexture);
+TEXTURE2D_X(_CustomColorTexture);
+
 // Main lightmap
 TEXTURE2D(unity_Lightmap);
 SAMPLER(samplerunity_Lightmap);
@@ -131,8 +165,7 @@ CBUFFER_START(UnityGlobal)
     float4x4 _InvViewProjMatrix;
     float4x4 _NonJitteredViewProjMatrix;
     float4x4 _PrevViewProjMatrix;       // non-jittered
-
-    float4 _TextureWidthScaling; // 0.5 for SinglePassDoubleWide (stereo) and 1.0 otherwise
+    float4x4 _PrevInvViewProjMatrix;       // non-jittered
 
     // TODO: put commonly used vars together (below), and then sort them by the frequency of use (descending).
     // Note: a matrix is 4 * 4 * 4 = 64 bytes (1x cache line), so no need to sort those.
@@ -145,8 +178,8 @@ CBUFFER_START(UnityGlobal)
     float4 _ScreenSize;                 // { w, h, 1 / w, 1 / h }
 
     // Those two uniforms are specific to the RTHandle system
-    float4 _ScreenToTargetScale;        // { w / RTHandle.maxWidth, h / RTHandle.maxHeight } : xy = currFrame, zw = prevFrame
-    float4 _ScreenToTargetScaleHistory; // Same as above but the RTHandle handle size is that of the history buffer
+    float4 _RTHandleScale;        // { w / RTHandle.maxWidth, h / RTHandle.maxHeight } : xy = currFrame, zw = prevFrame
+    float4 _RTHandleScaleHistory; // Same as above but the RTHandle handle size is that of the history buffer
 
     // Values used to linearize the Z buffer (http://www.humus.name/temp/Linearize%20depth.txt)
     // x = 1 - f/n
@@ -182,19 +215,19 @@ CBUFFER_START(UnityGlobal)
     float4 _ShadowFrustumPlanes[6];     // { (a, b, c) = N, d = -dot(N, P) } [L, R, T, B, N, F]
 
     // TAA Frame Index ranges from 0 to 7.
-    // First two channels of this gives you two rotations per cycle.
-    float4 _TaaFrameInfo;           // { sin(taaFrame * PI/2), cos(taaFrame * PI/2), taaFrame, taaEnabled ? 1 : 0 }
+    float4 _TaaFrameInfo;               // { taaSharpenStrength, unused, taaFrameIndex, taaEnabled ? 1 : 0 }
 
     // Current jitter strength (0 if TAA is disabled)
     float4 _TaaJitterStrength;          // { x, y, x/width, y/height }
 
     // t = animateMaterials ? Time.realtimeSinceStartup : 0.
+    // We keep all those time value for compatibility with legacy unity but prefer _TimeParameters instead.
     float4 _Time;                       // { t/20, t, t*2, t*3 }
-    float4 _LastTime;                   // { t/20, t, t*2, t*3 }
     float4 _SinTime;                    // { sin(t/8), sin(t/4), sin(t/2), sin(t) }
     float4 _CosTime;                    // { cos(t/8), cos(t/4), cos(t/2), cos(t) }
     float4 unity_DeltaTime;             // { dt, 1/dt, smoothdt, 1/smoothdt }
-    int _FrameCount;
+    float4 _TimeParameters;             // { t, sin(t), cos(t) }
+    float4 _LastTimeParameters;         // { t, sin(t), cos(t) }
 
     // Volumetric lighting.
     float4 _AmbientProbeCoeffs[7];      // 3 bands of SH, packed, rescaled and convolved with the phase function
@@ -206,20 +239,22 @@ CBUFFER_START(UnityGlobal)
     float  _HeightFogBaseHeight;
     float  _GlobalFogAnisotropy;
 
-    float4 _VBufferResolution;          // { w, h, 1/w, 1/h }
+    float4 _VBufferViewportSize;           // { w, h, 1/w, 1/h }
     uint   _VBufferSliceCount;
     float  _VBufferRcpSliceCount;
     float  _VBufferRcpInstancedViewCount;  // Used to remap VBuffer coordinates for XR
-    float  _Pad3;
-    float4 _VBufferUvScaleAndLimit;        // Necessary us to work with sub-allocation (resource aliasing) in the RTHandle system
+
+    float  _ContactShadowOpacity;
+    float4 _VBufferSharedUvScaleAndLimit;  // Necessary us to work with sub-allocation (resource aliasing) in the RTHandle system
+
     float4 _VBufferDistanceEncodingParams; // See the call site for description
     float4 _VBufferDistanceDecodingParams; // See the call site for description
 
     // TODO: these are only used for reprojection.
     // Once reprojection is performed in a separate pass, we should probably
     // move these to a dedicated CBuffer to avoid polluting the global one.
-    float4 _VBufferPrevResolution;
-    float4 _VBufferPrevUvScaleAndLimit;
+    float4 _VBufferPrevViewportSize;
+    float4 _VBufferHistoryPrevUvScaleAndLimit;
     float4 _VBufferPrevDepthEncodingParams;
     float4 _VBufferPrevDepthDecodingParams;
 
@@ -231,32 +266,45 @@ CBUFFER_START(UnityGlobal)
 
     #define DEFAULT_LIGHT_LAYERS 0xFF
     uint _EnableLightLayers;
-    uint _EnableSpecularLighting;
+    float _ReplaceDiffuseForIndirect;
+    uint _EnableSkyReflection;
 
     uint _EnableSSRefraction;
 
     uint _OffScreenRendering;
     uint _OffScreenDownsampleFactor;
 
+    uint _XRViewCount;
+    int  _FrameCount;
+
+    float _ProbeExposureScale;
+    int  _UseRayTracedReflections;
+    int  _RaytracingFrameIndex;
+
+    float4 _CoarseStencilBufferSize;
+
 CBUFFER_END
 
 // Custom generated by HDRP, not from Unity Engine (passed in via HDCamera)
 #if defined(USING_STEREO_MATRICES)
+CBUFFER_START(UnityXRViewConstants)
+    float4x4 _XRViewMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRInvViewMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRProjMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRInvProjMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRViewProjMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRInvViewProjMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRNonJitteredViewProjMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRPrevViewProjMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRPrevInvViewProjMatrix[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRPrevViewProjMatrixNoCameraTrans[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4x4 _XRPixelCoordToViewDirWS[SHADEROPTIONS_XR_MAX_VIEWS];
 
-CBUFFER_START(UnityPerPassStereo)
-float4x4 _ViewMatrixStereo[2];
-float4x4 _ProjMatrixStereo[2];
-float4x4 _ViewProjMatrixStereo[2];
-float4x4 _InvViewMatrixStereo[2];
-float4x4 _InvProjMatrixStereo[2];
-float4x4 _InvViewProjMatrixStereo[2];
-float4x4 _PrevViewProjMatrixStereo[2];
-float4   _WorldSpaceCameraPosStereo[2];
-float4   _WorldSpaceCameraPosStereoEyeOffset[2];
-float4   _PrevCamPosRWSStereo[2];
+    float4 _XRWorldSpaceCameraPos[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4 _XRWorldSpaceCameraPosViewOffset[SHADEROPTIONS_XR_MAX_VIEWS];
+    float4 _XRPrevWorldSpaceCameraPos[SHADEROPTIONS_XR_MAX_VIEWS];
 CBUFFER_END
-
-#endif // USING_STEREO_MATRICES
+#endif
 
 // Note: To sample camera depth in HDRP we provide these utils functions because the way we store the depth mips can change
 // Currently it's an atlas and it's layout can be found at ComputePackedMipChainInfo in HDUtils.cs
@@ -277,7 +325,7 @@ float3 LoadCameraColor(uint2 pixelCoords, uint lod)
 
 float3 SampleCameraColor(float2 uv, float lod)
 {
-    return SAMPLE_TEXTURE2D_X_LOD(_ColorPyramidTexture, s_trilinear_clamp_sampler, uv * _ScreenToTargetScaleHistory.xy, lod).rgb;
+    return SAMPLE_TEXTURE2D_X_LOD(_ColorPyramidTexture, s_trilinear_clamp_sampler, uv * _RTHandleScaleHistory.xy, lod).rgb;
 }
 
 float3 LoadCameraColor(uint2 pixelCoords)
@@ -288,6 +336,26 @@ float3 LoadCameraColor(uint2 pixelCoords)
 float3 SampleCameraColor(float2 uv)
 {
     return SampleCameraColor(uv, 0);
+}
+
+float4 SampleCustomColor(float2 uv)
+{
+    return SAMPLE_TEXTURE2D_X_LOD(_CustomColorTexture, s_trilinear_clamp_sampler, uv * _RTHandleScale.xy, 0);
+}
+
+float4 LoadCustomColor(uint2 pixelCoords)
+{
+    return LOAD_TEXTURE2D_X_LOD(_CustomColorTexture, pixelCoords, 0);
+}
+
+float LoadCustomDepth(uint2 pixelCoords)
+{
+    return LOAD_TEXTURE2D_X_LOD(_CustomDepthTexture, pixelCoords, 0).r;
+}
+
+float SampleCustomDepth(float2 uv)
+{
+    return LoadCustomDepth(uint2(uv * _ScreenSize.xy));
 }
 
 float4x4 OptimizeProjectionMatrix(float4x4 M)
@@ -327,22 +395,30 @@ float4x4 ApplyCameraTranslationToInverseMatrix(float4x4 inverseModelMatrix)
 #endif
 }
 
+void ApplyCameraRelativeXR(inout float3 positionWS)
+{
+#if (SHADEROPTIONS_CAMERA_RELATIVE_RENDERING != 0) && defined(USING_STEREO_MATRICES)
+    positionWS += _WorldSpaceCameraPosViewOffset;
+#endif
+}
 
 float GetCurrentExposureMultiplier()
 {
 #if SHADEROPTIONS_PRE_EXPOSITION
-    return LOAD_TEXTURE2D(_ExposureTexture, int2(0, 0)).x;
+    // _ProbeExposureScale is a scale used to perform range compression to avoid saturation of the content of the probes. It is 1.0 if we are not rendering probes.
+    return LOAD_TEXTURE2D(_ExposureTexture, int2(0, 0)).x * _ProbeExposureScale;
 #else
-    return 1.0;
+    return _ProbeExposureScale;
 #endif
 }
 
 float GetPreviousExposureMultiplier()
 {
 #if SHADEROPTIONS_PRE_EXPOSITION
-    return LOAD_TEXTURE2D(_PrevExposureTexture, int2(0, 0)).x;
+    // _ProbeExposureScale is a scale used to perform range compression to avoid saturation of the content of the probes. It is 1.0 if we are not rendering probes.
+    return LOAD_TEXTURE2D(_PrevExposureTexture, int2(0, 0)).x * _ProbeExposureScale;
 #else
-    return 1.0;
+    return _ProbeExposureScale;
 #endif
 }
 
@@ -354,7 +430,7 @@ float GetInverseCurrentExposureMultiplier()
 
 float GetInversePreviousExposureMultiplier()
 {
-    float exposure = GetCurrentExposureMultiplier();
+    float exposure = GetPreviousExposureMultiplier();
     return rcp(exposure + (exposure == 0.0)); // zero-div guard
 }
 
@@ -363,7 +439,7 @@ float GetInversePreviousExposureMultiplier()
 float2 ClampAndScaleUV(float2 UV, float2 texelSize, float numberOfTexels)
 {
     float2 maxCoord = 1.0f - numberOfTexels * texelSize;
-    return min(UV, maxCoord) * _ScreenToTargetScale.xy;
+    return min(UV, maxCoord) * _RTHandleScale.xy;
 }
 
 // This is assuming half a texel offset in the clamp.
@@ -380,14 +456,18 @@ float2 ClampAndScaleUVForBilinear(float2 UV)
 
 float2 ClampAndScaleUVForPoint(float2 UV)
 {
-    return min(UV, 1.0f) * _ScreenToTargetScale.xy;
+    return min(UV, 1.0f) * _RTHandleScale.xy;
 }
 
-bool ReplaceDiffuseForReflectionPass(float3 fresnel0)
+uint Get1DAddressFromPixelCoord(uint2 pixCoord, uint2 screenSize, uint eye)
 {
-    // we want to use Fresnel0 instead diffuse when doing reflection (reflection probe, planar reflection,
-    // DXR reflection). Dieletric are suppose to have a fresnel of around 0.04. Let's consider anything above 0.3 as metal.
-    return (_EnableSpecularLighting.x == 0) && Max3(fresnel0.r, fresnel0.g, fresnel0.b) > 0.3;
+    // We need to shift the index to look up the right eye info.
+    return (pixCoord.y * screenSize.x + pixCoord.x) + eye * (screenSize.x * screenSize.y);
+}
+
+uint Get1DAddressFromPixelCoord(uint2 pixCoord, uint2 screenSize)
+{
+    return Get1DAddressFromPixelCoord(pixCoord, screenSize, 0);
 }
 
 // Define Model Matrix Macro

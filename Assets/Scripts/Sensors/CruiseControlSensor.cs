@@ -9,6 +9,7 @@ using UnityEngine;
 using Simulator.Bridge;
 using Simulator.Utilities;
 using Simulator.Sensors.UI;
+using System.Collections.Generic;
 
 namespace Simulator.Sensors
 {
@@ -19,15 +20,18 @@ namespace Simulator.Sensors
         [Range(0.0f, 200f)]
         public float CruiseSpeed = 0f;
 
-        private VehicleDynamics dynamics;
+        private IVehicleDynamics dynamics;
         private VehicleController controller;
 
         public float SteerInput { get; private set; } = 0f;
         public float AccelInput { get; private set; } = 0f;
+        public float BrakeInput { get; private set; } = 0f;
+        
+        public override SensorDistributionType DistributionType => SensorDistributionType.LowLoad;
 
         private void Start()
         {
-            dynamics = GetComponentInParent<VehicleDynamics>();
+            dynamics = GetComponentInParent<IVehicleDynamics>();
             controller = GetComponentInParent<VehicleController>();
         }
 
@@ -36,7 +40,9 @@ namespace Simulator.Sensors
             Debug.Assert(dynamics != null);
 
             if (controller.AccelInput >= 0)
-                AccelInput = dynamics.CurrentSpeed < CruiseSpeed ? 1f : 0f;
+            {
+                AccelInput = dynamics.RB.velocity.magnitude < CruiseSpeed ? 1f : 0f;
+            }
         }
         
         public override void OnBridgeSetup(IBridge bridge)
@@ -46,7 +52,22 @@ namespace Simulator.Sensors
 
         public override void OnVisualize(Visualizer visualizer)
         {
-            //
+            Debug.Assert(visualizer != null);
+
+            var graphData = new Dictionary<string, object>()
+            {
+                {"Cruise Speed", CruiseSpeed},
+                {"Steer Input", SteerInput},
+                {"Accel Input", AccelInput},
+                {"Speed", dynamics.RB.velocity.magnitude},
+                {"Hand Brake", dynamics.HandBrake},
+                {"Ignition", dynamics.CurrentIgnitionStatus},
+                {"Reverse", dynamics.Reverse},
+                {"Gear", dynamics.CurrentGear},
+                {"RPM", dynamics.CurrentRPM},
+                {"Velocity", dynamics.RB.velocity}
+            };
+            visualizer.UpdateGraphValues(graphData);
         }
 
         public override void OnVisualizeToggle(bool state)

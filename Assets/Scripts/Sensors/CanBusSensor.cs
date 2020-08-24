@@ -11,6 +11,7 @@ using Simulator.Map;
 using Simulator.Utilities;
 using UnityEngine;
 using Simulator.Sensors.UI;
+using System.Collections.Generic;
 
 namespace Simulator.Sensors
 {
@@ -28,19 +29,26 @@ namespace Simulator.Sensors
         IWriter<CanBusData> Writer;
 
         Rigidbody RigidBody;
-        VehicleDynamics Dynamics;
+        IVehicleDynamics Dynamics;
         VehicleActions Actions;
         MapOrigin MapOrigin;
+
+        CanBusData msg;
+        
+        public override SensorDistributionType DistributionType => SensorDistributionType.LowLoad;
+
+        private void Awake()
+        {
+            RigidBody = GetComponentInParent<Rigidbody>();
+            Actions = GetComponentInParent<VehicleActions>();
+            Dynamics = GetComponentInParent<IVehicleDynamics>();
+            MapOrigin = MapOrigin.Find();
+        }
 
         public override void OnBridgeSetup(IBridge bridge)
         {
             Bridge = bridge;
             Writer = bridge.AddWriter<CanBusData>(Topic);
-
-            RigidBody = GetComponentInParent<Rigidbody>();
-            Actions = GetComponentInParent<VehicleActions>();
-            Dynamics = GetComponentInParent<VehicleDynamics>();
-            MapOrigin = MapOrigin.Find();
         }
 
         public void Start()
@@ -65,7 +73,7 @@ namespace Simulator.Sensors
 
             var gps = MapOrigin.GetGpsLocation(transform.position);
 
-            var msg = new CanBusData()
+            msg = new CanBusData()
             {
                 Name = Name,
                 Frame = Frame,
@@ -92,7 +100,7 @@ namespace Simulator.Sensors
                 InReverse = Dynamics.Reverse,
                 Gear = Mathf.RoundToInt(Dynamics.CurrentGear),
 
-                EngineOn = Dynamics.IgnitionStatus == IgnitionStatus.On,
+                EngineOn = Dynamics.CurrentIgnitionStatus == IgnitionStatus.On,
                 EngineRPM = Dynamics.CurrentRPM,
 
                 Latitude = gps.Latitude,
@@ -111,7 +119,37 @@ namespace Simulator.Sensors
 
         public override void OnVisualize(Visualizer visualizer)
         {
-            //
+            Debug.Assert(visualizer != null);
+
+            if (msg == null)
+            {
+                return;
+            }
+
+            var graphData = new Dictionary<string, object>()
+            {
+                {"Speed", msg.Speed},
+                {"Throttle", msg.Throttle},
+                {"Braking", msg.Braking},
+                {"Steering", msg.Steering},
+                {"Parking Brake", msg.ParkingBrake},
+                {"Low Beam Signal", msg.LowBeamSignal},
+                {"Hazard Lights", msg.HazardLights},
+                {"Fog Lights", msg.FogLights},
+                {"Left Turn Signal", msg.LeftTurnSignal},
+                {"Right Turn Signal", msg.RightTurnSignal},
+                {"Wipers", msg.Wipers},
+                {"In Reverse", msg.InReverse},
+                {"Gear", msg.Gear},
+                {"Engine On", msg.EngineOn},
+                {"Engine RPM", msg.EngineRPM},
+                {"Latitude", msg.Latitude},
+                {"Longitude", msg.Longitude},
+                {"Altitude", msg.Altitude},
+                {"Orientation", msg.Orientation},
+                {"Velocity", msg.Velocity},
+            };
+            visualizer.UpdateGraphValues(graphData);
         }
 
         public override void OnVisualizeToggle(bool state)

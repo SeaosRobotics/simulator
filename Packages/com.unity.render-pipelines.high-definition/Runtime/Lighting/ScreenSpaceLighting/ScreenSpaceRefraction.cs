@@ -1,26 +1,32 @@
 using System;
-using UnityEngine.Rendering;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
-
+    /// <summary>
+    /// A volume component that holds settings for the Screen Space Refraction effect.
+    /// </summary>
     [Serializable, VolumeComponentMenu("Lighting/Screen Space Refraction")]
     public class ScreenSpaceRefraction : VolumeComponent
     {
-        public enum RefractionModel
+        internal enum RefractionModel
         {
             None = 0,
             Box = 1,
-            Sphere = 2
+            Sphere = 2,
+            Thin = 3
         };
 
         int m_InvScreenFadeDistanceID;
 
+        /// <summary>
+        /// Controls the distance at which HDRP fades out Screen Space Refraction near the edge of the screen. A value near 0 indicates a small fade distance at the edges,
+        /// while increasing the value towards one will start the fade closer to the center of the screen.
+        /// </summary>
         public ClampedFloatParameter screenFadeDistance = new ClampedFloatParameter(0.1f, 0.001f, 1.0f);
 
         static ScreenSpaceRefraction s_Default = null;
 
-        public static ScreenSpaceRefraction @default
+        internal static ScreenSpaceRefraction defaultInstance
         {
             get
             {
@@ -33,12 +39,12 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             }
         }
 
-        public virtual void PushShaderParameters(CommandBuffer cmd)
+        internal virtual void PushShaderParameters(CommandBuffer cmd)
         {
             cmd.SetGlobalFloat(m_InvScreenFadeDistanceID, 1.0f / screenFadeDistance.value);
         }
 
-        protected void FetchIDs(
+        void FetchIDs(
             out int invScreenWeightDistanceID)
         {
             invScreenWeightDistanceID = HDShaderIDs._SSRefractionInvScreenWeightDistance;

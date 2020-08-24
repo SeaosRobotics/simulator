@@ -3,26 +3,30 @@ Shader "Hidden/HDRP/FinalPass"
     HLSLINCLUDE
 
         #pragma target 4.5
+        #pragma editor_sync_compilation
         #pragma only_renderers d3d11 ps4 xboxone vulkan metal switch
 
         #pragma multi_compile_local _ FXAA
         #pragma multi_compile_local _ GRAIN
         #pragma multi_compile_local _ DITHER
+        #pragma multi_compile_local _ ENABLE_ALPHA
         #pragma multi_compile_local _ APPLY_AFTER_POST
 
-        #pragma multi_compile_local _ BILINEAR CATMULL_ROM_4 LANCZOS
+        #pragma multi_compile_local _ BILINEAR CATMULL_ROM_4 LANCZOS CONTRASTADAPTIVESHARPEN
         #define DEBUG_UPSCALE_POINT 0
 
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Color.hlsl"
         #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
         #include "Packages/com.unity.render-pipelines.high-definition/Runtime/PostProcessing/Shaders/FXAA.hlsl"
+        #include "Packages/com.unity.render-pipelines.high-definition/Runtime/PostProcessing/Shaders/PostProcessDefines.hlsl"
         #include "Packages/com.unity.render-pipelines.high-definition/Runtime/PostProcessing/Shaders/RTUpscale.hlsl"
 
         TEXTURE2D_X(_InputTexture);
         TEXTURE2D(_GrainTexture);
         TEXTURE2D_X(_AfterPostProcessTexture);
         TEXTURE2D_ARRAY(_BlueNoiseTexture);
+        TEXTURE2D_X(_AlphaTexture);
 
         SAMPLER(sampler_LinearClamp);
         SAMPLER(sampler_LinearRepeat);
@@ -31,6 +35,7 @@ Shader "Hidden/HDRP/FinalPass"
         float4 _GrainTextureParams;     // x: width, y: height, zw: random offset
         float3 _DitherParams;           // x: width, y: height, z: texture_id
         float4 _UVTransform;
+        float  _KeepAlpha;
 
         struct Attributes
         {
@@ -55,7 +60,7 @@ Shader "Hidden/HDRP/FinalPass"
             return output;
         }
 
-        float3 UpscaledResult(float2 UV)
+        CTYPE UpscaledResult(float2 UV)
         {
         #if DEBUG_UPSCALE_POINT
             return Nearest(_InputTexture, UV);
@@ -74,33 +79,37 @@ Shader "Hidden/HDRP/FinalPass"
 
         float4 Frag(Varyings input) : SV_Target0
         {
+
             UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
 
             float2 positionNDC = input.texcoord;
             uint2 positionSS = input.texcoord * _ScreenSize.xy;
-
-            #if UNITY_SINGLE_PASS_STEREO
-                positionNDC.x = (positionNDC.x + unity_StereoEyeIndex) * 0.5;
-            #endif
 
             // Flip logic
             positionSS = positionSS * _UVTransform.xy + _UVTransform.zw * (_ScreenSize.xy - 1.0);
             positionNDC = positionNDC * _UVTransform.xy + _UVTransform.zw;
 
             #if defined(BILINEAR) || defined(CATMULL_ROM_4) || defined(LANCZOS)
-            float3 outColor = UpscaledResult(positionNDC.xy);
+            CTYPE outColor = UpscaledResult(positionNDC.xy);
+            #elif defined(CONTRASTADAPTIVESHARPEN)
+            CTYPE outColor = LOAD_TEXTURE2D_X(_InputTexture, positionSS / _RTHandleScale.xy).CTYPE_SWIZZLE;
             #else
-            float3 outColor = LOAD_TEXTURE2D_X(_InputTexture, positionSS).xyz;
+            CTYPE outColor = LOAD_TEXTURE2D_X(_InputTexture, positionSS).CTYPE_SWIZZLE;
             #endif
 
+			#if !defined(ENABLE_ALPHA)
+            float outAlpha = (_KeepAlpha == 1.0) ? LOAD_TEXTURE2D_X(_AlphaTexture, positionSS).x : 1.0;
+			#endif
+			
             #if FXAA
-            RunFXAA(_InputTexture, sampler_LinearClamp, outColor, positionSS, positionNDC);
+            RunFXAA(_InputTexture, sampler_LinearClamp, outColor.rgb, positionSS, positionNDC);
             #endif
 
             // Saturate is only needed for dither or grain to work. Otherwise we don't saturate because output might be HDR
-#if defined(GRAIN) || defined(DITHER)
+            #if defined(GRAIN) || defined(DITHER)
             outColor = saturate(outColor);
-#endif
+            #endif
+
 
             #if GRAIN
             {
@@ -130,18 +139,22 @@ Shader "Hidden/HDRP/FinalPass"
                 noise = FastSign(noise) * (1.0 - sqrt(1.0 - abs(noise)));
 
                 //outColor += noise / 255.0;
-                outColor = SRGBToLinear(LinearToSRGB(outColor) + noise / 255.0);
+                outColor.xyz = SRGBToLinear(LinearToSRGB(outColor.xyz) + noise / 255.0);
             }
             #endif
 
             // Apply AfterPostProcess target
             #if APPLY_AFTER_POST
-            float4 afterPostColor = SAMPLE_TEXTURE2D_X_LOD(_AfterPostProcessTexture, s_point_clamp_sampler, positionNDC.xy * _ScreenToTargetScale.xy, 0);
+            float4 afterPostColor = SAMPLE_TEXTURE2D_X_LOD(_AfterPostProcessTexture, s_point_clamp_sampler, positionNDC.xy * _RTHandleScale.xy, 0);
             // After post objects are blended according to the method described here: https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch23.html
             outColor.xyz = afterPostColor.a * outColor.xyz + afterPostColor.xyz;
             #endif
 
-            return float4(outColor, 1.0);
+        #if !defined(ENABLE_ALPHA)
+            return float4(outColor, outAlpha);
+        #else
+            return outColor;
+        #endif
         }
 
     ENDHLSL

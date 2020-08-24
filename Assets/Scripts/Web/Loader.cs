@@ -18,20 +18,37 @@ using Simulator.Api;
 using Simulator.Web;
 using Simulator.Web.Modules;
 using Simulator.Utilities;
-using Web;
 using Simulator.Bridge;
 using System.Text;
 using System.Security.Cryptography;
 using Simulator.Database.Services;
 using System.Linq;
+using Web;
+using ICSharpCode.SharpZipLib.Zip;
+using YamlDotNet.Serialization;
+using System.Net.Http;
+using SimpleJSON;
+using Simulator.Network.Shared;
+using Simulator.Network.Client;
+using Simulator.Network.Core.Configs;
+using Simulator.Network.Core.Threading;
+using MasterManager = Simulator.Network.Master.MasterManager;
+using ICSharpCode.SharpZipLib.Core;
+using Simulator.FMU;
+using Simulator.PointCloud.Trees;
 
 namespace Simulator
 {
     public class AgentConfig
     {
         public string Name;
+        public uint GTID;
+        public string Url;
         public string AssetBundle;
+        [NonSerialized]
         public GameObject Prefab;
+        [NonSerialized]
+        public GameObject AgentGO;
         public IBridgeFactory Bridge;
         public string Connection;
         public string Sensors;
@@ -43,6 +60,7 @@ namespace Simulator
     {
         public string Name;
         public string MapName;
+        public string MapUrl;
         public string[] Clusters;
         public string ClusterName;
         public bool ApiOnly;
@@ -64,12 +82,11 @@ namespace Simulator
         public string Address { get; private set; }
 
         private NancyHost Server;
+        public SimulationNetwork Network { get; } = new SimulationNetwork();
         public SimulatorManager SimulatorManagerPrefab;
         public ApiManager ApiManagerPrefab;
 
-        public Network.MasterManager Master;
-        public Network.ClientManager Client;
-        public SimulationModel PendingSimulation;
+        public NetworkSettings NetworkSettings;
 
         public LoaderUI LoaderUI => FindObjectOfType<LoaderUI>();
 
@@ -77,7 +94,7 @@ namespace Simulator
         public SimulationModel CurrentSimulation;
 
         ConcurrentQueue<Action> Actions = new ConcurrentQueue<Action>();
-        string LoaderScene;
+        public string LoaderScene { get; private set; }
 
         public SimulationConfig SimConfig;
 
@@ -85,11 +102,33 @@ namespace Simulator
         public static Loader Instance { get; private set; }
         private System.Diagnostics.Stopwatch stopWatch = new System.Diagnostics.Stopwatch();
 
-        private void Awake()
+        public bool EditorLoader { get; set; } = false;
+
+        private void Start()
         {
-            stopWatch.Start();
-            SIM.Identify();
+            if (!EditorLoader)
+            {
+                Init();
+            }
+            else
+            {
+                EditorInit();
+            }
+        }
+
+        private void Init()
+        {
             RenderLimiter.RenderLimitEnabled();
+            if (Instance != null)
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            stopWatch.Start();
+
+            var info = Resources.Load<BuildInfo>("BuildInfo");
+            SIM.Init(info == null ? "Development" : info.Version);
 
             if (PlayerPrefs.HasKey("Salt"))
             {
@@ -103,36 +142,160 @@ namespace Simulator
                 PlayerPrefs.SetString("Salt", ByteArrayToString(Config.salt));
                 PlayerPrefs.Save();
             }
-        }
 
-        void Start()
-        {
-            if (Instance != null)
+            if (Config.RunAsMaster)
             {
-                Destroy(gameObject);
-                return;
+                var masterGameObject = new GameObject("MasterManager");
+                Network.Master = masterGameObject.AddComponent<MasterManager>();
+                masterGameObject.AddComponent<MainThreadDispatcher>();
+                Network.Master.SetSettings(NetworkSettings);
+                Network.Master.StartConnection();
+                DontDestroyOnLoad(masterGameObject);
             }
-
-            if (!Config.RunAsMaster)
+            else
             {
-                // TODO: change UI and do not run rest of code
-                var obj = new GameObject("ClientManager");
-                obj.AddComponent<Network.ClientManager>();
+                var clientGameObject = new GameObject("ClientManager");
+                Network.Client = clientGameObject.AddComponent<ClientManager>();
+                clientGameObject.AddComponent<MainThreadDispatcher>();
+                Network.Client.SetSettings(NetworkSettings);
+                Network.Client.StartConnection();
+                Network.Initialize(SimulationNetwork.ClusterNodeType.Client, NetworkSettings);
+                DontDestroyOnLoad(clientGameObject);
             }
 
             DatabaseManager.Init();
 
+            DownloadManager.Init();
+            RestartPendingDownloads();
+
+            if (Config.RunAsMaster)
+                try
+                {
+                    var host = Config.WebHost == "*" ? "localhost" : Config.WebHost;
+                    Address = $"http://{host}:{Config.WebPort}";
+
+                    var config = new HostConfiguration { RewriteLocalhost = Config.WebHost == "*" };
+
+                    Server = new NancyHost(new UnityBootstrapper(), config, new Uri(Address));
+                    if (!string.IsNullOrEmpty(Config.Username))
+                    {
+                        LoginAsync();
+                    }
+                    else
+                    {
+                        Server.Start();
+                    }
+                }
+                catch (SocketException ex)
+                {
+                    Debug.LogException(ex);
+#if UNITY_EDITOR
+                    UnityEditor.EditorApplication.isPlaying = false;
+#else
+                    // return non-zero exit code
+                    Application.Quit(1);
+#endif
+                    return;
+                }
+
+            LoaderScene = SceneManager.GetActiveScene().name;
+            SIM.LogSimulation(SIM.Simulation.ApplicationStart);
+
+            DontDestroyOnLoad(this);
+            Instance = this;
+        }
+
+        private void EditorInit()
+        {
+#if UNITY_EDITOR
+            stopWatch.Start();
+            var info = Resources.Load<BuildInfo>("BuildInfo");
+            SIM.Init(info == null ? "Development" : info.Version);
+            SIM.LogSimulation(SIM.Simulation.ApplicationStart);
+            Instance = this;
+
+            var sim = Instantiate(Instance.SimulatorManagerPrefab);
+            sim.name = "SimulatorManager";
+            bool useSeed = false;
+            int? seed = null;
+            bool enableNPCs = false;
+            bool enablePEDs = false;
+
+            var data = UnityEditor.EditorPrefs.GetString("Simulator/DevelopmentSettings");
+            if (data != null)
+            {
+                try
+                {
+                    var json = JSONNode.Parse(data);
+
+                    useSeed = json["UseSeed"];
+                    if (useSeed)
+                    {
+                        seed = json["Seed"];
+                    }
+
+                    enableNPCs = json["EnableNPCs"];
+                    enablePEDs = json["EnablePEDs"];
+                }
+                catch (System.Exception ex)
+                {
+                    Debug.LogException(ex);
+                }
+            }
+
+            sim.Init(seed);
+            sim.AgentManager.SetupDevAgents();
+            sim.NPCManager.NPCActive = enableNPCs;
+            sim.PedestrianManager.PedestriansActive = enablePEDs;
+#endif
+        }
+
+        async void LoginAsync()
+        {
             try
             {
-                var host = Config.WebHost == "*" ? "localhost" : Config.WebHost;
-                Address = $"http://{host}:{Config.WebPort}";
+                var client = new HttpClient();
+                client.DefaultRequestHeaders.Add("Accept", "application/json");
 
-                var config = new HostConfiguration { RewriteLocalhost = Config.WebHost == "*" };
+                var postData = new[] {  new KeyValuePair<string, string>("username", Config.Username),
+                                    new KeyValuePair<string, string>("password", Config.Password),
+                                    new KeyValuePair<string, string>("returnUrl", Config.WebHost + Config.WebPort)};
+                var postForm = new FormUrlEncodedContent(postData);
+                var postResponse = await client.PostAsync(Config.CloudUrl + "/users/signin", postForm);
+                var postContent = await postResponse.Content.ReadAsStringAsync();
 
-                Server = new NancyHost(new UnityBootstrapper(), config, new Uri(Address));
+                var postJson = JSONNode.Parse(postContent);
+
+                var putData = new[] { new KeyValuePair<string, string>("token", postJson["token"].Value) };
+                var formContent = new FormUrlEncodedContent(putData);
+
+                var response = await client.PutAsync(Config.CloudUrl + "/users/token", formContent);
+                var content = await response.Content.ReadAsStringAsync();
+
+                var json = JSONNode.Parse(content);
+                UserModel userModel = new UserModel()
+                {
+                    Username = json["username"].Value,
+                    SecretKey = json["secretKey"].Value,
+                    Settings = json["settings"].Value
+                };
+
+                if (string.IsNullOrEmpty(userModel.Username))
+                {
+                    throw new Exception("Invalid Login: incorrect login info or account does not exist");
+                }
+
+                UserService userService = new UserService();
+                userService.AddOrUpdate(userModel);
+                SIM.InitUser(userModel.Username);
+
+                var guid = Guid.NewGuid();
+                UserMapper.RegisterUserSession(guid, userModel.Username);
+                Config.SessionGUID = guid.ToString();
+
                 Server.Start();
             }
-            catch (SocketException ex)
+            catch (Exception ex)
             {
                 Debug.LogException(ex);
 #if UNITY_EDITOR
@@ -143,20 +306,6 @@ namespace Simulator
 #endif
                 return;
             }
-
-            DownloadManager.Init();
-            RestartPendingDownloads();
-
-            LoaderScene = SceneManager.GetActiveScene().name;
-            var version = "Development";
-            var info = Resources.Load<BuildInfo>("BuildInfo");
-            if (info != null)
-                version = info.Version;
-            SIM.Init(version);
-            SIM.LogSimulation(SIM.Simulation.ApplicationStart);
-
-            DontDestroyOnLoad(this);
-            Instance = this;
         }
 
         void RestartPendingDownloads()
@@ -175,12 +324,29 @@ namespace Simulator
                             Debug.Log($"Map Download at {progress}%");
                             NotificationManager.SendNotification("MapDownload", new { map.Id, progress }, map.Owner);
                         },
-                        success =>
+                        (success, ex) =>
                         {
                             var updatedModel = db.Single<MapModel>(map.Id);
-                            updatedModel.Status = success ? "Valid" : "Invalid";
+                            bool passesValidation = false;
+                            if (success)
+                            {
+                                passesValidation = Validation.BeValidAssetBundle(map.LocalPath);
+                                if (!passesValidation)
+                                {
+                                    updatedModel.Error = "You must specify a valid AssetBundle";
+                                }
+                            }
+
+                            updatedModel.Status = passesValidation ? "Valid" : "Invalid";
+
+                            if (ex != null)
+                            {
+                                updatedModel.Error = ex.Message;
+                            }
+
                             db.Update(updatedModel);
                             NotificationManager.SendNotification("MapDownloadComplete", updatedModel, map.Owner);
+
                             SIM.LogWeb(SIM.Web.MapDownloadFinish, map.Name);
                         }
                     );
@@ -207,12 +373,24 @@ namespace Simulator
                             Debug.Log($"Vehicle Download at {progress}%");
                             NotificationManager.SendNotification("VehicleDownload", new { vehicle.Id, progress }, vehicle.Owner);
                         },
-                        success =>
+                        (success, ex) =>
                         {
-                            string status = success ? "Valid" : "Invalid";
+                            bool passesValidation = success && Validation.BeValidAssetBundle(vehicle.LocalPath);
+
+                            string status = passesValidation ? "Valid" : "Invalid";
                             vehicles.SetStatusForPath(status, vehicle.LocalPath);
                             vehicles.GetAllMatchingUrl(vehicle.Url).ForEach(v =>
                             {
+                                if (!passesValidation)
+                                {
+                                    v.Error = "You must specify a valid AssetBundle";
+                                }
+
+                                if (ex != null)
+                                {
+                                    v.Error = ex.Message;
+                                }
+
                                 NotificationManager.SendNotification("VehicleDownloadComplete", v, v.Owner);
                                 SIM.LogWeb(SIM.Web.VehicleDownloadFinish, vehicle.Name);
                             });
@@ -245,6 +423,7 @@ namespace Simulator
             {
                 using (var db = DatabaseManager.Open())
                 {
+                    AssetBundle textureBundle = null;
                     AssetBundle mapBundle = null;
                     try
                     {
@@ -265,7 +444,7 @@ namespace Simulator
                             ApiOnly = simulation.ApiOnly.GetValueOrDefault(),
                             Headless = simulation.Headless.GetValueOrDefault(),
                             Interactive = simulation.Interactive.GetValueOrDefault(),
-                            TimeOfDay = simulation.TimeOfDay.GetValueOrDefault(DateTime.MinValue.AddHours(12)),
+                            TimeOfDay = simulation.TimeOfDay.GetValueOrDefault(new DateTime(1980, 3, 24, 12, 0, 0)),
                             Rain = simulation.Rain.GetValueOrDefault(),
                             Fog = simulation.Fog.GetValueOrDefault(),
                             Wetness = simulation.Wetness.GetValueOrDefault(),
@@ -288,6 +467,7 @@ namespace Simulator
                                 var config = new AgentConfig()
                                 {
                                     Name = vehicle.Name,
+                                    Url = vehicle.Url,
                                     AssetBundle = vehicle.LocalPath,
                                     Connection = v.Connection,
                                     Sensors = vehicle.Sensors,
@@ -305,6 +485,18 @@ namespace Simulator
                                 return config;
 
                             }).ToArray();
+                        }
+
+                        //Initialize network for the master, client has initialized network since startup
+                        if (Instance.SimConfig.Clusters == null || Instance.SimConfig.Clusters.Length == 0)
+                        {
+                            if (Config.RunAsMaster)
+                                Instance.Network.Initialize(SimulationNetwork.ClusterNodeType.NotClusterNode, Instance.NetworkSettings);
+                        }
+                        else if (Config.RunAsMaster)
+                        {
+                            Instance.Network.Initialize(SimulationNetwork.ClusterNodeType.Master, Instance.NetworkSettings);
+                            Instance.Network.Master.Simulation = Instance.SimConfig;
                         }
 
                         // load environment
@@ -325,34 +517,130 @@ namespace Simulator
                         {
                             var mapModel = db.Single<MapModel>(simulation.Map);
                             var mapBundlePath = mapModel.LocalPath;
+                            mapBundle = null;
+                            textureBundle = null;
 
-                            // TODO: make this async
-                            mapBundle = AssetBundle.LoadFromFile(mapBundlePath);
-                            if (mapBundle == null)
+                            ZipFile zip = new ZipFile(mapBundlePath);
                             {
-                                throw new Exception($"Failed to load environment from '{mapModel.Name}' asset bundle");
-                            }
-
-                            var scenes = mapBundle.GetAllScenePaths();
-                            if (scenes.Length != 1)
-                            {
-                                throw new Exception($"Unsupported environment in '{mapModel.Name}' asset bundle, only 1 scene expected");
-                            }
-
-                            var sceneName = Path.GetFileNameWithoutExtension(scenes[0]);
-                            Instance.SimConfig.MapName = sceneName;
-
-                            var loader = SceneManager.LoadSceneAsync(sceneName);
-                            loader.completed += op =>
-                            {
-                                if (op.isDone)
+                                string manfile;
+                                ZipEntry entry = zip.GetEntry("manifest");
+                                using (var ms = zip.GetInputStream(entry))
                                 {
-                                    mapBundle.Unload(false);
-                                    SetupScene(simulation);
+                                    int streamSize = (int)entry.Size;
+                                    byte[] buffer = new byte[streamSize];
+                                    streamSize = ms.Read(buffer, 0, streamSize);
+                                    manfile = Encoding.UTF8.GetString(buffer);
                                 }
-                            };
 
+                                Manifest manifest;
+
+                                try
+                                {
+                                    manifest = new Deserializer().Deserialize<Manifest>(manfile);
+                                }
+                                catch
+                                {
+                                    throw new Exception("Out of date AssetBundle, rebuild or download latest AssetBundle.");
+                                }
+
+                                if (manifest.additionalFiles != null)
+                                {
+                                    foreach (string key in manifest.additionalFiles.Keys)
+                                    {
+                                        if (key.Contains("pointcloud"))
+                                        {
+                                            if (!Directory.Exists(Path.Combine(Application.persistentDataPath, manifest.assetGuid)))
+                                            {
+                                                Directory.CreateDirectory(Path.Combine(Application.persistentDataPath, manifest.assetGuid));
+                                                FastZip fastZip = new FastZip();
+                                                fastZip.ExtractZip(mapBundlePath, Path.Combine(Application.persistentDataPath, manifest.assetGuid), ".*\\.(pcnode|pcindex|pcmesh)$");
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if (manifest.bundleFormat != BundleConfig.Versions[BundleConfig.BundleTypes.Environment])
+                                {
+                                    zip.Close();
+
+                                    // TODO: proper exception
+                                    throw new ZipException("BundleFormat version mismatch");
+                                }
+
+                                if (zip.FindEntry($"{manifest.assetGuid}_environment_textures", false) != -1)
+                                {
+                                    var texStream = zip.GetInputStream(zip.GetEntry($"{manifest.assetGuid}_environment_textures"));
+                                    textureBundle = AssetBundle.LoadFromStream(texStream, 0, 1 << 20);
+                                }
+
+                                string platform = SystemInfo.operatingSystemFamily == OperatingSystemFamily.Windows ? "windows" : "linux";
+                                var mapStream = zip.GetInputStream(zip.GetEntry($"{manifest.assetGuid}_environment_main_{platform}"));
+                                mapBundle = AssetBundle.LoadFromStream(mapStream, 0, 1 << 20);
+
+                                if (mapBundle == null)
+                                {
+                                    throw new Exception($"Failed to load environment from '{mapModel.Name}' asset bundle");
+                                }
+
+                                textureBundle?.LoadAllAssets();
+
+                                var scenes = mapBundle.GetAllScenePaths();
+                                if (scenes.Length != 1)
+                                {
+                                    throw new Exception($"Unsupported environment in '{mapModel.Name}' asset bundle, only 1 scene expected");
+                                }
+
+                                var sceneName = Path.GetFileNameWithoutExtension(scenes[0]);
+                                Instance.SimConfig.MapName = sceneName;
+                                Instance.SimConfig.MapUrl = mapModel.Url;
+
+                                var isMasterSimulation = Instance.SimConfig.Clusters.Length > 0;
+                                var loader =
+                                    SceneManager.LoadSceneAsync(sceneName,
+                                        isMasterSimulation ? LoadSceneMode.Additive : LoadSceneMode.Single);
+                                loader.completed += op =>
+                                {
+                                    if (op.isDone)
+                                    {
+                                        if (isMasterSimulation)
+                                            SceneManager.SetActiveScene(SceneManager.GetSceneByName(sceneName));
+                                        textureBundle?.Unload(false);
+                                        mapBundle.Unload(false);
+                                        zip.Close();
+                                        NodeTreeLoader[] loaders = FindObjectsOfType<NodeTreeLoader>();
+                                        foreach (NodeTreeLoader l in loaders)
+                                        {
+                                            l.UpdateData(Path.Combine(Application.persistentDataPath, manifest.assetGuid, $"pointcloud_{Utilities.Utility.StringToGUID(l.GetDataPath())}".ToString()));
+                                        }
+
+                                        SetupScene(simulation);
+                                    }
+                                };
+                            }
                         }
+                    }
+                    catch (ZipException ex)
+                    {
+                        Debug.Log($"Failed to start '{simulation.Name}' simulation");
+                        Debug.LogException(ex);
+
+                        // NOTE: In case of failure we have to update Simulation state
+                        simulation.Status = "Invalid";
+                        simulation.Error = "Out of date Map AssetBundle. Please check content website for updated bundle or rebuild the bundle.";
+                        db.Update(simulation);
+
+                        if (SceneManager.GetActiveScene().name != Instance.LoaderScene)
+                        {
+                            SceneManager.LoadScene(Instance.LoaderScene);
+                        }
+
+                        textureBundle?.Unload(false);
+                        mapBundle?.Unload(false);
+                        AssetBundle.UnloadAllAssetBundles(true);
+                        Instance.CurrentSimulation = null;
+
+                        // TODO: take ex.Message and append it to response here
+                        NotificationManager.SendNotification("simulation", SimulationResponse.Create(simulation), simulation.Owner);
                     }
                     catch (Exception ex)
                     {
@@ -361,12 +649,15 @@ namespace Simulator
 
                         // NOTE: In case of failure we have to update Simulation state
                         simulation.Status = "Invalid";
+                        simulation.Error = ex.Message;
                         db.Update(simulation);
 
                         if (SceneManager.GetActiveScene().name != Instance.LoaderScene)
                         {
                             SceneManager.LoadScene(Instance.LoaderScene);
                         }
+
+                        textureBundle?.Unload(false);
                         mapBundle?.Unload(false);
                         AssetBundle.UnloadAllAssetBundles(true);
                         Instance.CurrentSimulation = null;
@@ -378,9 +669,27 @@ namespace Simulator
             });
         }
 
+        public static void ResetMaterials()
+        {
+            // TODO remove hack for editor opaque with alpha clipping 2019.3.3
+#if UNITY_EDITOR
+            var go = FindObjectsOfType<Renderer>();
+            foreach (var renderer in go)
+            {
+                foreach (var m in renderer.materials)
+                {
+                    m.shader = Shader.Find(m.shader.name);
+                }
+            }
+#endif
+        }
+
         public static void StopAsync()
         {
             Debug.Assert(Instance.CurrentSimulation != null);
+
+            if (Instance.Network.Master != null)
+                Instance.Network.Master.BroadcastSimulationStop();
 
             Instance.Actions.Enqueue(() =>
             {
@@ -402,7 +711,7 @@ namespace Simulator
                         {
                             if (op.isDone)
                             {
-                                AssetBundle.UnloadAllAssetBundles(true);
+                                AssetBundle.UnloadAllAssetBundles(false);
                                 Instance.LoaderUI.SetLoaderUIState(LoaderUI.LoaderUIStateType.START);
 
                                 simulation.Status = "Valid";
@@ -418,6 +727,7 @@ namespace Simulator
 
                         // NOTE: In case of failure we have to update Simulation state
                         simulation.Status = "Invalid";
+                        simulation.Error = ex.Message;
                         db.Update(simulation);
 
                         // TODO: take ex.Message and append it to response here
@@ -429,6 +739,8 @@ namespace Simulator
 
         static void SetupScene(SimulationModel simulation)
         {
+            Dictionary<string, GameObject> cachedVehicles = new Dictionary<string, GameObject>();
+
             using (var db = DatabaseManager.Open())
             {
                 try
@@ -436,54 +748,163 @@ namespace Simulator
                     foreach (var agentConfig in Instance.SimConfig.Agents)
                     {
                         var bundlePath = agentConfig.AssetBundle;
-
-                        // TODO: make this async
-                        var vehicleBundle = AssetBundle.LoadFromFile(bundlePath);
-                        if (vehicleBundle == null)
+                        AssetBundle textureBundle = null;
+                        AssetBundle vehicleBundle = null;
+                        if (cachedVehicles.ContainsKey(agentConfig.Name))
                         {
-                            throw new Exception($"Failed to load '{agentConfig.Name}' vehicle asset bundle");
+                            agentConfig.Prefab = cachedVehicles[agentConfig.Name];
+                            continue;
                         }
 
-                        try
+                        using (ZipFile zip = new ZipFile(bundlePath))
                         {
-                            var vehicleAssets = vehicleBundle.GetAllAssetNames();
-                            if (vehicleAssets.Length != 1)
+                            Manifest manifest;
+                            ZipEntry entry = zip.GetEntry("manifest");
+                            using (var ms = zip.GetInputStream(entry))
                             {
-                                throw new Exception($"Unsupported '{agentConfig.Name}' vehicle asset bundle, only 1 asset expected");
+                                int streamSize = (int)entry.Size;
+                                byte[] buffer = new byte[streamSize];
+                                streamSize = ms.Read(buffer, 0, streamSize);
+
+                                try
+                                {
+                                    manifest = new Deserializer().Deserialize<Manifest>(Encoding.UTF8.GetString(buffer, 0, streamSize));
+                                }
+                                catch
+                                {
+                                    throw new Exception("Out of date AssetBundle, rebuild or download latest AssetBundle.");
+                                }
                             }
 
-                            // TODO: make this async
-                            agentConfig.Prefab = vehicleBundle.LoadAsset<GameObject>(vehicleAssets[0]);
-                        }
-                        finally
-                        {
-                            vehicleBundle.Unload(false);
+                            if (manifest.bundleFormat != BundleConfig.Versions[BundleConfig.BundleTypes.Vehicle])
+                            {
+                                zip.Close();
+
+                                // TODO: proper exception
+                                throw new ZipException("BundleFormat version mismatch");
+                            }
+
+                            var texStream = zip.GetInputStream(zip.GetEntry($"{manifest.assetGuid}_vehicle_textures"));
+                            textureBundle = AssetBundle.LoadFromStream(texStream, 0, 1 << 20);
+
+                            string platform = SystemInfo.operatingSystemFamily == OperatingSystemFamily.Windows ? "windows" : "linux";
+                            var mapStream = zip.GetInputStream(zip.GetEntry($"{manifest.assetGuid}_vehicle_main_{platform}"));
+
+                            vehicleBundle = AssetBundle.LoadFromStream(mapStream, 0, 1 << 20);
+
+                            if (vehicleBundle == null)
+                            {
+                                throw new Exception($"Failed to load '{agentConfig.Name}' vehicle asset bundle");
+                            }
+
+                            try
+                            {
+                                var vehicleAssets = vehicleBundle.GetAllAssetNames();
+                                if (vehicleAssets.Length != 1)
+                                {
+                                    throw new Exception($"Unsupported '{agentConfig.Name}' vehicle asset bundle, only 1 asset expected");
+                                }
+
+                                if (manifest.fmuName != "")
+                                {
+                                    var fmuDirectory = Path.Combine(Application.persistentDataPath, manifest.assetName);
+                                    if (platform == "windows")
+                                    {
+                                        var dll = zip.GetEntry($"{manifest.fmuName}_windows.dll");
+                                        if (dll == null)
+                                        {
+                                            throw new ArgumentException($"{manifest.fmuName}.dll not found in Zip {bundlePath}");
+                                        }
+
+                                        using (Stream s = zip.GetInputStream(dll))
+                                        {
+                                            byte[] buffer = new byte[4096];
+                                            Directory.CreateDirectory(fmuDirectory);
+                                            var path = Path.Combine(Application.persistentDataPath, manifest.assetName, $"{manifest.fmuName}.dll");
+                                            using (FileStream streamWriter = File.Create(path))
+                                            {
+                                                StreamUtils.Copy(s, streamWriter, buffer);
+                                            }
+                                            vehicleBundle.LoadAsset<GameObject>(vehicleAssets[0]).GetComponent<VehicleFMU>().FMUData.Path = path;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        var dll = zip.GetEntry($"{manifest.fmuName}_linux.so");
+                                        if (dll == null)
+                                        {
+                                            throw new ArgumentException($"{manifest.fmuName}.so not found in Zip {bundlePath}");
+                                        }
+
+                                        using (Stream s = zip.GetInputStream(dll))
+                                        {
+                                            byte[] buffer = new byte[4096];
+                                            Directory.CreateDirectory(fmuDirectory);
+                                            var path = Path.Combine(Application.persistentDataPath, manifest.assetName, $"{manifest.fmuName}.so");
+                                            using (FileStream streamWriter = File.Create(path))
+                                            {
+                                                StreamUtils.Copy(s, streamWriter, buffer);
+                                            }
+                                            vehicleBundle.LoadAsset<GameObject>(vehicleAssets[0]).GetComponent<VehicleFMU>().FMUData.Path = path;
+                                        }
+                                    }
+
+                                }
+
+                                // TODO: make this async
+                                if (!AssetBundle.GetAllLoadedAssetBundles().Contains(textureBundle))
+                                {
+                                    textureBundle?.LoadAllAssets();
+                                }
+
+                                agentConfig.Prefab = vehicleBundle.LoadAsset<GameObject>(vehicleAssets[0]);
+                                cachedVehicles.Add(agentConfig.Name, agentConfig.Prefab);
+                            }
+                            finally
+                            {
+                                textureBundle?.Unload(false);
+                                vehicleBundle.Unload(false);
+                            }
                         }
                     }
 
-                    var sim = CreateSimulationManager();
+                    var sim = CreateSimulatorManager();
+                    if (simulation.Seed != null)
+                        sim.Init(simulation.Seed);
+                    else
+                        sim.Init();
 
-                    // TODO: connect to cluster instances
-                    //if (Instance.SimConfig.Clusters.Length > 0)
-                    //{
-                    //    SimulatorManager.SetTimeScale(0);
+                    Instance.CurrentSimulation = simulation;
+                    Instance.CurrentSimulation.Status = "Running";
+                    // Notify WebUI simulation is running
+                    NotificationManager.SendNotification("simulation",
+                        SimulationResponse.Create(Loader.Instance.CurrentSimulation),
+                        Loader.Instance.CurrentSimulation.Owner);
 
-                    //    Instance.PendingSimulation = simulation;
-
-                    //    StartNetworkMaster();
-                    //    Instance.Master.AddClients(Instance.SimConfig.Clusters);
-                    //}
-                    //else
+                    if (Instance.SimConfig.Clusters.Length == 0)
                     {
-                        Instance.CurrentSimulation = simulation;
-
-                        // Notify WebUI simulation is running
-                        Instance.CurrentSimulation.Status = "Running";
-                        NotificationManager.SendNotification("simulation", SimulationResponse.Create(Instance.CurrentSimulation), Instance.CurrentSimulation.Owner);
-
                         // Flash main window to let user know simulation is ready
                         WindowFlasher.Flash();
                     }
+                    else
+                    {
+                        Instance.Network.Master.InitializeSimulation(sim.gameObject);
+                    }
+                }
+                catch (ZipException ex)
+                {
+                    Debug.Log($"Failed to start '{simulation.Name}' simulation - out of date asset bundles");
+                    Debug.LogException(ex);
+
+                    // NOTE: In case of failure we have to update Simulation state
+                    simulation.Status = "Invalid";
+                    simulation.Error = "Out of date Vehicle AssetBundle. Please check content website for updated bundle or rebuild the bundle.";
+                    db.Update(simulation);
+
+                    // TODO: take ex.Message and append it to response here
+                    NotificationManager.SendNotification("simulation", SimulationResponse.Create(simulation), simulation.Owner);
+
+                    ResetLoaderScene();
                 }
                 catch (Exception ex)
                 {
@@ -492,6 +913,7 @@ namespace Simulator
 
                     // NOTE: In case of failure we have to update Simulation state
                     simulation.Status = "Invalid";
+                    simulation.Error = ex.Message;
                     db.Update(simulation);
 
                     // TODO: take ex.Message and append it to response here
@@ -529,19 +951,21 @@ namespace Simulator
             return bytes;
         }
 
-        static void StartNetworkMaster()
-        {
-            var obj = new GameObject("NetworkMaster");
-            Instance.Master = obj.AddComponent<Network.MasterManager>();
-            Instance.Master.Simulation = Instance.SimConfig;
-        }
-
-        public static SimulatorManager CreateSimulationManager()
+        public static SimulatorManager CreateSimulatorManager()
         {
             var sim = Instantiate(Instance.SimulatorManagerPrefab);
             sim.name = "SimulatorManager";
-            sim.Init();
+
             return sim;
+        }
+
+        static byte[] GetFile(ZipFile zip, string entryName)
+        {
+            var entry = zip.GetEntry(entryName);
+            int streamSize = (int)entry.Size;
+            byte[] buffer = new byte[streamSize];
+            zip.GetInputStream(entry).Read(buffer, 0, streamSize);
+            return buffer;
         }
     }
 }

@@ -1,12 +1,10 @@
 using System;
-using System.Collections.Generic;
-using UnityEngine.Rendering;
 using UnityEngine.Serialization;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
     [Obsolete("For data migration")]
-    public enum ObsoleteLitShaderMode
+    enum ObsoleteLitShaderMode
     {
         Forward,
         Deferred
@@ -57,7 +55,6 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         DepthPrepassWithDeferredRendering = 1 << 22,
         OpaqueObjects = 1 << 24,
         TransparentObjects = 1 << 25,
-        RealtimePlanarReflection = 1 << 26,
 
         // Async settings
         AsyncCompute = 1 << 23,
@@ -97,7 +94,7 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         public bool enableSSR;
         public bool enableSSAO;
         public bool enableSubsurfaceScattering;
-        public bool enableTransmission;  
+        public bool enableTransmission;
         public bool enableAtmosphericScattering;
         public bool enableVolumetrics;
         public bool enableReprojectionForVolumetrics;
@@ -106,7 +103,7 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
 
         public float diffuseGlobalDimmer;
         public float specularGlobalDimmer;
-        
+
         public ObsoleteLitShaderMode shaderLitMode;
         public bool enableDepthPrepassWithDeferredRendering;
 
@@ -125,14 +122,14 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         public bool enableRealtimePlanarReflection;
 
         public bool enableMSAA;
-        
+
         public bool enableAsyncCompute;
         public bool runLightListAsync;
         public bool runSSRAsync;
         public bool runSSAOAsync;
         public bool runContactShadowsAsync;
         public bool runVolumeVoxelizationAsync;
-        
+
         public ObsoleteLightLoopSettings lightLoopSettings;
     }
 
@@ -161,9 +158,9 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                     throw new ArgumentException("Unknown ObsoleteLitShaderMode");
             }
 
-            newFrameSettingsFormat.SetEnabled(FrameSettingsField.Shadow, oldFrameSettingsFormat.enableShadow);
+            newFrameSettingsFormat.SetEnabled(FrameSettingsField.ShadowMaps, oldFrameSettingsFormat.enableShadow);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.ContactShadows, oldFrameSettingsFormat.enableContactShadows);
-            newFrameSettingsFormat.SetEnabled(FrameSettingsField.ShadowMask, oldFrameSettingsFormat.enableShadowMask);
+            newFrameSettingsFormat.SetEnabled(FrameSettingsField.Shadowmask, oldFrameSettingsFormat.enableShadowMask);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.SSR, oldFrameSettingsFormat.enableSSR);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.SSAO, oldFrameSettingsFormat.enableSSAO);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.SubsurfaceScattering, oldFrameSettingsFormat.enableSubsurfaceScattering);
@@ -177,13 +174,12 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.MotionVectors, oldFrameSettingsFormat.enableMotionVectors);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.ObjectMotionVectors, oldFrameSettingsFormat.enableObjectMotionVectors);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.Decals, oldFrameSettingsFormat.enableDecals);
-            newFrameSettingsFormat.SetEnabled(FrameSettingsField.RoughRefraction, oldFrameSettingsFormat.enableRoughRefraction);
+            newFrameSettingsFormat.SetEnabled(FrameSettingsField.Refraction, oldFrameSettingsFormat.enableRoughRefraction);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.TransparentPostpass, oldFrameSettingsFormat.enableTransparentPostpass);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.Distortion, oldFrameSettingsFormat.enableDistortion);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.Postprocess, oldFrameSettingsFormat.enablePostprocess);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.OpaqueObjects, oldFrameSettingsFormat.enableOpaqueObjects);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.TransparentObjects, oldFrameSettingsFormat.enableTransparentObjects);
-            newFrameSettingsFormat.SetEnabled(FrameSettingsField.RealtimePlanarReflection, oldFrameSettingsFormat.enableRealtimePlanarReflection);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.MSAA, oldFrameSettingsFormat.enableMSAA);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.ExposureControl, oldFrameSettingsFormat.enableExposureControl);
             newFrameSettingsFormat.SetEnabled(FrameSettingsField.AsyncCompute, oldFrameSettingsFormat.enableAsyncCompute);
@@ -213,13 +209,13 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                     switch(val)
                     {
                         case ObsoleteFrameSettingsOverrides.Shadow:
-                            newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.Shadow] = true;
+                            newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.ShadowMaps] = true;
                             break;
                         case ObsoleteFrameSettingsOverrides.ContactShadow:
                             newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.ContactShadows] = true;
                             break;
                         case ObsoleteFrameSettingsOverrides.ShadowMask:
-                            newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.ShadowMask] = true;
+                            newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.Shadowmask] = true;
                             break;
                         case ObsoleteFrameSettingsOverrides.SSR:
                             newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.SSR] = true;
@@ -264,7 +260,7 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                             newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.Decals] = true;
                             break;
                         case ObsoleteFrameSettingsOverrides.RoughRefraction:
-                            newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.RoughRefraction] = true;
+                            newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.Refraction] = true;
                             break;
                         case ObsoleteFrameSettingsOverrides.TransparentPostpass:
                             newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.TransparentPostpass] = true;
@@ -280,9 +276,6 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                             break;
                         case ObsoleteFrameSettingsOverrides.TransparentObjects:
                             newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.TransparentObjects] = true;
-                            break;
-                        case ObsoleteFrameSettingsOverrides.RealtimePlanarReflection:
-                            newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.RealtimePlanarReflection] = true;
                             break;
                         case ObsoleteFrameSettingsOverrides.MSAA:
                             newFrameSettingsOverrideMask.mask[(int)FrameSettingsField.MSAA] = true;
@@ -352,13 +345,76 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             oldFrameSettingsFormat = null;
         }
 #pragma warning restore 618 // Type or member is obsolete
-        
+
+        internal static void MigrateToCustomPostprocessAndCustomPass(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.CustomPass, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.CustomPostProcess, true);
+        }
+
         internal static void MigrateToAfterPostprocess(ref FrameSettings cameraFrameSettings)
         {
             cameraFrameSettings.SetEnabled(FrameSettingsField.AfterPostprocess, true);
         }
 
-        internal static void MigrateToSpecularLighting(ref FrameSettings cameraFrameSettings)
-            => cameraFrameSettings.SetEnabled(FrameSettingsField.SpecularLighting, true);
+        internal static void MigrateToDefaultReflectionSettings(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.ReflectionProbe, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.PlanarProbe, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.ReplaceDiffuseForIndirect, false);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.SkyReflection, true);
+        }
+
+        internal static void MigrateToNoReflectionRealtimeSettings(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.ReflectionProbe, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.PlanarProbe, false);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.ReplaceDiffuseForIndirect, false);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.SkyReflection, true);
+        }
+
+        internal static void MigrateToNoReflectionSettings(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.ReflectionProbe, false);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.PlanarProbe, false);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.ReplaceDiffuseForIndirect, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.SkyReflection, false);
+        }
+
+        internal static void MigrateToPostProcess(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.StopNaN, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.DepthOfField, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.MotionBlur, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.PaniniProjection, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.Bloom, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.LensDistortion, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.ChromaticAberration, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.Vignette, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.ColorGrading, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.FilmGrain, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.Dithering, true);
+            cameraFrameSettings.SetEnabled(FrameSettingsField.Antialiasing, true);
+        }
+
+        internal static void MigrateToDirectSpecularLighting(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.DirectSpecularLighting, true);
+        }
+
+        internal static void MigrateToNoDirectSpecularLighting(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.DirectSpecularLighting, false);
+        }
+
+        internal static void MigrateToRayTracing(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.RayTracing, true);
+        }
+
+        internal static void MigrateToSeparateColorGradingAndTonemapping(ref FrameSettings cameraFrameSettings)
+        {
+            cameraFrameSettings.SetEnabled(FrameSettingsField.Tonemapping, true);
+        }
     }
 }

@@ -9,57 +9,110 @@ using System.Collections.Generic;
 using UnityEngine;
 using Simulator.Map;
 using System.Linq;
+using System.Net;
+using Simulator;
+using Simulator.Network.Core.Components;
+using Simulator.Network.Core.Connection;
+using Simulator.Network.Core.Messaging;
+using Simulator.Network.Core.Messaging.Data;
+using Simulator.Network.Shared;
+using Simulator.Network.Shared.Messages;
 
-public class NPCManager : MonoBehaviour
+public class NPCManager : MonoBehaviour, IMessageSender, IMessageReceiver
 {
     [System.Serializable]
     public struct NPCS
     {
         public GameObject Prefab;
+        public NPCSizeType NPCType;
+    }
+    public List<NPCS> NPCVehicles = new List<NPCS>();
+
+    public Dictionary<NPCSizeType, int> NPCFrequencyWeights = new Dictionary<NPCSizeType, int> ()
+    {
+        [NPCSizeType.Compact]       = 5,
+        [NPCSizeType.MidSize]       = 6,
+        [NPCSizeType.Luxury]        = 2,
+        [NPCSizeType.Sport]         = 1,
+        [NPCSizeType.LightTruck]    = 2,
+        [NPCSizeType.SUV]           = 4,
+        [NPCSizeType.MiniVan]       = 3,
+        [NPCSizeType.Large]         = 2,
+        [NPCSizeType.Emergency]     = 1,
+        [NPCSizeType.Bus]           = 1,
+        [NPCSizeType.Trailer]       = 0,
+        [NPCSizeType.Motorcycle]    = 1,
+    };
+
+    [System.Serializable]
+    public struct NPCColors
+    {
+        public NPCSizeType Type;
+        public List<NPCTypeColors> TypeColors;
+    }
+    [System.Serializable]
+    public struct NPCTypeColors
+    {
+        public Color Color;
         public int Weight;
     }
-    public List<NPCS> npcVehicles = new List<NPCS>();
+    // loosely based on ppg 2017 trends https://news.ppg.com/automotive-color-trends/
+    public List<NPCColors> NPCColorData = new List<NPCColors>();
 
-    private LayerMask NPCSpawnCheckBitmask;
-    private float checkRadius = 6f;
-    private Camera activeCamera;
-
-    public bool isDespawnTimer = false;
-    public bool isRightSideDriving = true;
-    public bool isSpawnAreaVisible = false;
-    public bool isSpawnAreaLimited = true;
-    public Vector3 spawnArea = Vector3.zero;
-    public float despawnDistance = 300f;
-    private Bounds spawnBounds = new Bounds();
-    private Color spawnColor = Color.magenta;
-    private Vector3 spawnPos;
-    private Transform spawnT;
-    public bool NPCActive { get; set; } = false;
-
-    public enum NPCCountType
+    public struct NPCSpawnData
     {
-        Low = 150,
-        Medium = 125,
-        High = 50
+        public bool Active;
+        public string GenId;
+        public NPCS Template;
+        public Vector3 Position;
+        public Quaternion Rotation;
+        public Color Color;
+        public int Seed;
     };
-    public NPCCountType npcCountType = NPCCountType.Low;
 
-    private int npcCount = 0;
-    private int activeNPCCount = 0;
+    // startTime kept for recording when Simulator starts.
+    // Used for deciding when to record log file.
+    [System.NonSerialized]
+    public double startTime = 0f;
+    private MapOrigin MapOrigin;
+    private bool InitSpawn = true;
+
+    public bool NPCActive { get; set; } = false;
     [HideInInspector]
-    public List<NPCController> currentPooledNPCs = new List<NPCController>();
+    public List<NPCController> CurrentPooledNPCs = new List<NPCController>();
+    private LayerMask NPCSpawnCheckBitmask;
+    private Vector3 SpawnBoundsSize;
+    private bool DebugSpawnArea = false;
+    private int NPCMaxCount = 0;
+    private  int ActiveNPCCount = 0;
     private System.Random RandomGenerator;
-    private System.Random NPCSeedGenerator;  // Only use this for initializing a new NPC
+    public System.Random NPCSeedGenerator { get; private set; } // Only use this for initializing a new NPC
     private int Seed = new System.Random().Next();
     private List<NPCController> APINPCs = new List<NPCController>();
+    public string Key => "NPCManager"; //Network IMessageSender key
 
-    private void Awake()
+    private Camera SimulatorCamera;
+    private MapManager MapManager;
+
+    public delegate void DespawnCallbackType(NPCController controller);
+    List<DespawnCallbackType> DespawnCallbacks = new List<DespawnCallbackType>();
+
+    public void RegisterDespawnCallback(DespawnCallbackType callback)
     {
-        if (spawnT == null)
-            spawnT = transform;
+        DespawnCallbacks.Add(callback);
+    }
 
-        if (activeCamera == null)
-            activeCamera = Camera.main;
+    public void DeregisterDespawnCallback(DespawnCallbackType callback)
+    {
+        if (!DespawnCallbacks.Remove(callback))
+        {
+            Debug.LogError("Error in DeregisterDespawnCallback. " + callback + " is not registered before.");
+        }
+    }
+
+    public void ClearDespawnCallbacks()
+    {
+        DespawnCallbacks.Clear();
     }
 
     public void InitRandomGenerator(int seed)
@@ -71,156 +124,151 @@ public class NPCManager : MonoBehaviour
 
     private void Start()
     {
-        NPCSpawnCheckBitmask = 1 << LayerMask.NameToLayer("NPC") | 1 << LayerMask.NameToLayer("Agent");
-        npcCount = Mathf.CeilToInt(SimulatorManager.Instance.MapManager.totalLaneDist / (int)npcCountType);
-        if (!SimulatorManager.Instance.IsAPI)
+        MapOrigin = MapOrigin.Find();
+        NPCSpawnCheckBitmask = LayerMask.GetMask("NPC", "Agent");
+        SpawnBoundsSize = new Vector3(MapOrigin.NPCSpawnBoundSize, 50f, MapOrigin.NPCSpawnBoundSize);
+        NPCMaxCount = MapOrigin.NPCMaxCount;
+        SimulatorCamera = SimulatorManager.Instance.CameraManager.SimulatorCamera;
+        MapManager = SimulatorManager.Instance.MapManager;
+
+        NPCVehicles.Clear();
+        foreach (var data in Simulator.Web.Config.NPCVehicles)
+        {
+            NPCVehicles.Add(new NPCS{
+                NPCType = data.Value.NPCType,
+                Prefab = data.Value.prefab,
+            });
+           
+            if(NPCColorData.Count(d => d.Type == data.Value.NPCType) == 0)
+            {
+                Debug.LogWarning($"NPC of type {data.Value.NPCType} loaded but no colors to pick configured for this type");
+            }
+        }
+
+        var network = Loader.Instance.Network;
+        network.MessagesManager?.RegisterObject(this);
+        if (!SimulatorManager.Instance.IsAPI && !network.IsClient)
         {
             SpawnNPCPool();
+            if (NPCActive)
+                SetNPCOnMap();
         }
+    }
+
+    private void OnDestroy()
+    {
+        Loader.Instance.Network.MessagesManager?.UnregisterObject(this);
     }
 
     public void PhysicsUpdate()
     {
-        if (SimulatorManager.Instance.IsAPI)
+        if (NPCActive)
         {
-            foreach (var npc in APINPCs)
-            {
-                if (npc.gameObject.activeInHierarchy)
-                {
-                    npc.PhysicsUpdate();
-                }
-            }
+            if (ActiveNPCCount < NPCMaxCount)
+                SetNPCOnMap();
         }
         else
         {
-            if (NPCActive)
-            {
-                if (activeNPCCount < npcCount)
-                    SetNPCOnMap();
-            }
-            else
-            {
-                DespawnAllNPC();
-            }
+            DespawnAllNPC();
+        }
 
-            foreach (var npc in currentPooledNPCs)
+        foreach (var npc in CurrentPooledNPCs)
+        {
+            if (npc.gameObject.activeInHierarchy)
             {
-                if (npc.gameObject.activeInHierarchy)
-                {
-                    npc.PhysicsUpdate();
-                }
+                npc.PhysicsUpdate();
             }
         }
     }
 
-    #region api
-    public void DespawnVehicle(NPCController obj)
+    #region npc
+    public void ToggleNPC()
     {
-        if (obj == null)
-        {
-            return;
-        }
-
-        obj.StopNPCCoroutines();
-        obj.currentIntersection?.npcsInIntersection.Remove(obj.transform);
-        APINPCs.Remove(obj);
-        Destroy(obj.gameObject);
+        NPCActive = !NPCActive;
     }
 
-    public GameObject SpawnVehicle(string name, Vector3 position, Quaternion rotation)
+    public NPCController SpawnNPC(NPCSpawnData spawnData)
     {
-        var template = npcVehicles.Find(obj => obj.Prefab.name == name);
-        if (template.Prefab == null)
-        {
-            return null;
-        }
-
-        var genId = System.Guid.NewGuid().ToString();
-        var go = new GameObject("NPC " + genId);
+        var go = new GameObject();
+        go.SetActive(spawnData.Active);
         go.transform.SetParent(transform);
+        go.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
         go.layer = LayerMask.NameToLayer("NPC");
+        go.tag = "Car";
         var rb = go.AddComponent<Rigidbody>();
         rb.mass = 2000;
         rb.interpolation = RigidbodyInterpolation.Interpolate;
         rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
-        var npcC = go.AddComponent<NPCController>();
-        var npc_name = Instantiate(template.Prefab, go.transform).name;
-        go.name = npc_name + genId;
-        var NPCController = go.GetComponent<NPCController>();
-        NPCController.NPCType = GetNPCType(npc_name);
-        APINPCs.Add(NPCController);
-        NPCController.id = genId;
+        var NPCController = go.AddComponent<NPCController>();
+        var npc_name = Instantiate(spawnData.Template.Prefab, go.transform).name;
+        go.name = npc_name + spawnData.GenId;
+        NPCController.Size = spawnData.Template.NPCType;
+        NPCController.NPCColor = spawnData.Color;
+        NPCController.NPCLabel = GetNPCLabel(npc_name);
+        NPCController.id = spawnData.GenId;
         NPCController.GTID = ++SimulatorManager.Instance.GTIDs;
-        var s = NPCSeedGenerator.Next();
-        NPCController.Init(s);
-        SimulatorManager.Instance.UpdateSemanticTags(go);
-        go.transform.SetPositionAndRotation(position, rotation); // TODO check for incorrect calc speed
-        npcC.SetLastPosRot(position, rotation);
+        NPCController.Init(spawnData.Seed);
+        go.transform.SetPositionAndRotation(spawnData.Position, spawnData.Rotation);
+        NPCController.SetLastPosRot(spawnData.Position, spawnData.Rotation);
+        NPCController.SetBehaviour<NPCLaneFollowBehaviour>();
+        CurrentPooledNPCs.Add(NPCController);
 
-        return go;
+        SimulatorManager.Instance.UpdateSegmentationColors(go);
+        
+        //Add required components for distributing rigidbody from master to clients
+        if (Loader.Instance.Network.IsClusterSimulation)
+            ClusterSimulationUtilities.AddDistributedComponents(go);
+
+        return NPCController;
     }
 
-    public void Reset()
+    public List<NPCController> SpawnNPCPool()
     {
-        RandomGenerator = new System.Random(Seed);
-        NPCSeedGenerator = new System.Random(Seed);
-
-        List<NPCController> npcs = new List<NPCController>(APINPCs);
-        foreach (var npc in npcs)
+        var pooledNPCs = new List<NPCController>();
+        for (int i = 0; i < CurrentPooledNPCs.Count; i++)
         {
-            DespawnVehicle(npc);
+            if (Loader.Instance.Network.IsMaster)
+            {
+                var index = CurrentPooledNPCs.IndexOf(CurrentPooledNPCs[i]);
+                BroadcastMessage(GetDespawnMessage(index));
+            }
+
+            Destroy(CurrentPooledNPCs[i]);
         }
+        CurrentPooledNPCs.Clear();
+        ActiveNPCCount = 0;
 
-        APINPCs.Clear();
-    }
-    #endregion
-
-    #region npc
-    private void SpawnNPCPool()
-    {
-        for (int i = 0; i < currentPooledNPCs.Count; i++)
-        {
-            Destroy(currentPooledNPCs[i]);
-        }
-        currentPooledNPCs.Clear();
-        activeNPCCount = 0;
-
-        int poolCount = Mathf.FloorToInt(npcCount + (npcCount * 0.1f));
+        int poolCount = Mathf.FloorToInt(NPCMaxCount + (NPCMaxCount * 0.1f));
         for (int i = 0; i < poolCount; i++)
         {
-            var genId = System.Guid.NewGuid().ToString();
-            var go = new GameObject("NPC " + genId);
-            go.SetActive(false);
-            go.transform.SetParent(transform);
-            go.layer = LayerMask.NameToLayer("NPC");
-            go.tag = "Car";
-            var rb = go.AddComponent<Rigidbody>();
-            rb.mass = 2000;
-            rb.interpolation = RigidbodyInterpolation.Interpolate;
-            rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
-            go.AddComponent<NPCController>();
-            var npc_name = Instantiate(GetWeightedRandom(), go.transform).name;
-            go.name = npc_name + genId;
-            var NPCController = go.GetComponent<NPCController>();
-            NPCController.NPCType = GetNPCType(npc_name);
-            NPCController.id = genId;
-            NPCController.Init(NPCSeedGenerator.Next());
-            currentPooledNPCs.Add(NPCController);
-
-            SimulatorManager.Instance.UpdateSemanticTags(go);
+            var template = GetWeightedRandomNPC();
+            var spawnData = new NPCSpawnData
+            {
+                Active = false,
+                GenId = System.Guid.NewGuid().ToString(),
+                Template = template,
+                Position = Vector3.zero,
+                Rotation = Quaternion.identity,
+                Color = GetWeightedRandomColor(template.NPCType),
+                Seed = NPCSeedGenerator.Next(),
+            };
+            pooledNPCs.Add(SpawnNPC(spawnData));
+            if (Loader.Instance.Network.IsMaster)
+                BroadcastMessage(GetSpawnMessage(spawnData));
         }
+        return pooledNPCs;
     }
 
-    private void SetNPCOnMap()
+    public void SetNPCOnMap()
     {
-        for (int i = 0; i < currentPooledNPCs.Count; i++)
+        for (int i = 0; i < CurrentPooledNPCs.Count; i++)
         {
-            if (currentPooledNPCs[i].gameObject.activeInHierarchy)
+            if (CurrentPooledNPCs[i].gameObject.activeInHierarchy)
             {
                 continue;
             }
-            var mapManager = SimulatorManager.Instance.MapManager;
-            var lane = mapManager.GetLane(RandomGenerator.Next(mapManager.trafficLanes.Count));
+
+            var lane = MapManager.GetLane(RandomGenerator.Next(MapManager.trafficLanes.Count));
             if (lane == null) return;
 
             if (lane.mapWorldPositions == null || lane.mapWorldPositions.Count == 0)
@@ -229,98 +277,132 @@ public class NPCManager : MonoBehaviour
             if (lane.mapWorldPositions.Count < 2)
                 continue;
 
-            if (!lane.Spawnable)
-                continue;
+            var spawnPos = lane.mapWorldPositions[0];
+            CurrentPooledNPCs[i].transform.position = spawnPos;
 
-            var start = lane.mapWorldPositions[0];
-
-            if (isSpawnAreaLimited)
+            if (!WithinSpawnArea(spawnPos))
             {
-                if (IsPositionWithinSpawnArea(start))
+                continue;
+            }
+
+            if (!InitSpawn)
+            {
+                if (!lane.Spawnable)
                 {
-                    if (!Physics.CheckSphere(lane.mapWorldPositions[0], checkRadius, NPCSpawnCheckBitmask))
+                    if (IsVisible(CurrentPooledNPCs[i].gameObject))
                     {
-                        spawnPos = lane.mapWorldPositions[0];
-                        currentPooledNPCs[i].transform.position = spawnPos;
-                        if (!IsVisible(currentPooledNPCs[i].gameObject))
-                        {
-                            currentPooledNPCs[i].transform.LookAt(lane.mapWorldPositions[1]); // TODO check if index 1 is valid
-                            currentPooledNPCs[i].InitLaneData(lane);
-                            currentPooledNPCs[i].GTID = ++SimulatorManager.Instance.GTIDs;
-                            currentPooledNPCs[i].gameObject.SetActive(true);
-                            currentPooledNPCs[i].enabled = true;
-                            activeNPCCount++;
-                        }
-                        else
-                        {
-                            currentPooledNPCs[i].gameObject.SetActive(false);
-                            currentPooledNPCs[i].enabled = false;
-                            currentPooledNPCs[i].transform.position = transform.position;
-                            currentPooledNPCs[i].transform.rotation = Quaternion.identity;
-                        }
+                        continue;
                     }
                 }
             }
-            else
+
+            if (Physics.CheckSphere(spawnPos, 6f, NPCSpawnCheckBitmask))
             {
-                if (!Physics.CheckSphere(lane.mapWorldPositions[0], checkRadius, NPCSpawnCheckBitmask))
-                {
-                    spawnPos = lane.mapWorldPositions[0];
-                    currentPooledNPCs[i].transform.position = spawnPos;
-                    currentPooledNPCs[i].transform.LookAt(lane.mapWorldPositions[1]); // TODO check if index 1 is valid
-                    currentPooledNPCs[i].InitLaneData(lane);
-                    currentPooledNPCs[i].GTID = ++SimulatorManager.Instance.GTIDs;
-                    currentPooledNPCs[i].gameObject.SetActive(true);
-                    currentPooledNPCs[i].enabled = true;
-                    activeNPCCount++;
-                }
+                continue;
+            }
+
+            CurrentPooledNPCs[i].transform.LookAt(lane.mapWorldPositions[1]);
+            CurrentPooledNPCs[i].InitLaneData(lane);
+            CurrentPooledNPCs[i].GTID = ++SimulatorManager.Instance.GTIDs;
+            CurrentPooledNPCs[i].gameObject.SetActive(true);
+            CurrentPooledNPCs[i].enabled = true;
+            ActiveNPCCount++;
+
+            //Force snapshots resend after changing the transform position
+            if (Loader.Instance.Network.IsMaster)
+            {
+                var rb = CurrentPooledNPCs[i].GetComponent<DistributedRigidbody>();
+                if (rb != null)
+                    rb.BroadcastSnapshot(true);
             }
         }
+        InitSpawn = false;
     }
 
     public Transform GetRandomActiveNPC()
     {
-        if (currentPooledNPCs.Count == 0) return transform;
+        if (CurrentPooledNPCs.Count == 0) return transform;
 
-        int index = RandomGenerator.Next(currentPooledNPCs.Count);
-        while (!currentPooledNPCs[index].gameObject.activeInHierarchy)
+        int index = RandomGenerator.Next(CurrentPooledNPCs.Count);
+        while (!CurrentPooledNPCs[index].gameObject.activeInHierarchy)
         {
-            index = RandomGenerator.Next(currentPooledNPCs.Count);
+            index = RandomGenerator.Next(CurrentPooledNPCs.Count);
         }
-        return currentPooledNPCs[index].transform;
+        return CurrentPooledNPCs[index].transform;
     }
 
-    public void DespawnNPC(GameObject npc)
+    public void DespawnNPC(NPCController npc)
     {
-        npc.SetActive(false);
-        activeNPCCount--;
+        npc.gameObject.SetActive(false);
         npc.transform.position = transform.position;
         npc.transform.rotation = Quaternion.identity;
-        var npcC = npc.GetComponent<NPCController>();
-        if (npcC)
+
+        npc.StopNPCCoroutines();
+        npc.enabled = false;
+
+        if (NPCActive)
+            ActiveNPCCount--;
+
+        foreach (var callback in DespawnCallbacks)
         {
-            npcC.StopNPCCoroutines();
-            npcC.enabled = false;
+            callback(npc);
         }
+    }
+
+    public void DestroyNPC(NPCController obj)
+    {
+        if (obj == null)
+        {
+            return;
+        }
+
+        if (Loader.Instance.Network.IsMaster)
+        {
+            var index = CurrentPooledNPCs.IndexOf(obj);
+            BroadcastMessage(GetDespawnMessage(index));
+        }
+
+        obj.StopNPCCoroutines();
+        
+        if (obj.currentIntersection != null)
+            obj.currentIntersection.npcsInIntersection.Remove(obj.transform);
+
+        CurrentPooledNPCs.Remove(obj);
+        Destroy(obj.gameObject);
     }
 
     public void DespawnAllNPC()
     {
-        if (activeNPCCount == 0) return;
+        if (ActiveNPCCount == 0) return;
 
-        for (int i = 0; i < currentPooledNPCs.Count; i++)
+        for (int i = 0; i < CurrentPooledNPCs.Count; i++)
         {
-            DespawnNPC(currentPooledNPCs[i].gameObject);
+            DespawnNPC(CurrentPooledNPCs[i]);
         }
         foreach (var item in FindObjectsOfType<MapIntersection>())
         {
             item.stopQueue.Clear();
         }
 
-        activeNPCCount = 0;
+        ActiveNPCCount = 0;
     }
 
-    private string GetNPCType(string npc_name)
+    public void Reset()
+    {
+        RandomGenerator = new System.Random(Seed);
+        NPCSeedGenerator = new System.Random(Seed);
+
+        List<NPCController> npcs = new List<NPCController>(CurrentPooledNPCs);
+        foreach (var npc in npcs)
+        {
+            DestroyNPC(npc);
+        }
+
+        CurrentPooledNPCs.Clear();
+        ClearDespawnCallbacks();
+    }
+
+    private string GetNPCLabel(string npc_name)
     {
         var npc_type = npc_name;
         var end_index = npc_name.IndexOf("(");
@@ -339,62 +421,204 @@ public class NPCManager : MonoBehaviour
         return RandomGenerator.Next(max);
     }
 
-    private GameObject GetWeightedRandom()
+    int GetNPCFrequencyWeight(NPCSizeType type)
     {
-        int totalWeight = npcVehicles.Sum(npcs => npcs.Weight);
-        int rnd = RandomGenerator.Next(totalWeight);
-
-        GameObject npcPrefab = npcVehicles[0].Prefab;
-        for (int i = 0; i < npcVehicles.Count; i++)
+        if(NPCFrequencyWeights.ContainsKey(type))
         {
-            if (rnd < npcVehicles[i].Weight)
-            {
-                npcPrefab = npcVehicles[i].Prefab;
-                break;
-            }
-            rnd -= npcVehicles[i].Weight;
+            return NPCFrequencyWeights[type];
         }
-
-        return npcPrefab;
+        return 1;
     }
 
-    public bool IsPositionWithinSpawnArea(Vector3 pos)
+    private NPCS GetWeightedRandomNPC()
     {
-        Transform tempT = SimulatorManager.Instance.AgentManager.CurrentActiveAgent?.transform;
-        if (tempT != null)
-            spawnT = tempT;
+        int totalWeight = NPCVehicles.Where(npc => HasSizeFlag(npc.NPCType)).Sum(npc => GetNPCFrequencyWeight(npc.NPCType));
+        int rnd = RandomGenerator.Next(totalWeight);
 
-        spawnBounds = new Bounds(spawnT.position, spawnArea);
-        if (spawnBounds.Contains(pos))
+        foreach (var npc in NPCVehicles)
+        {
+            if (npc.NPCType != NPCSizeType.Trailer && HasSizeFlag(npc.NPCType))
+            {
+                int weight = GetNPCFrequencyWeight(npc.NPCType);
+                if (rnd < weight)
+                {
+                    return npc;
+                }
+                rnd -= weight;
+            }
+        }
+
+        throw new System.Exception("NPC size weights are incorrectly set!");
+    }
+
+    public Color GetWeightedRandomColor(NPCSizeType type)
+    {
+        var colors = NPCColorData.Find(colorData => colorData.Type == type).TypeColors;
+        int totalWeight = colors.Sum(c => c.Weight);
+        int rnd = RandomGenerator.Next(totalWeight);
+
+        for (int i = 0; i < colors.Count; i++)
+        {
+            if (rnd < colors[i].Weight)
+            {
+                return colors[i].Color;
+            }
+            rnd -= colors[i].Weight;
+        }
+
+        throw new System.Exception("NPC color weights are incorrectly set!");
+    }
+
+    private bool HasSizeFlag(NPCSizeType sizeType)
+    {
+        if ((MapOrigin.NPCSizeMask & (int)sizeType) != 0)
+        {
             return true;
-        else
-            return false;
+        }
+        return false;
+    }
+
+    public bool WithinSpawnArea(Vector3 pos)
+    {
+        var spawnT = SimulatorManager.Instance.AgentManager.CurrentActiveAgent?.transform;
+        spawnT = spawnT ?? transform;
+        var spawnBounds = new Bounds(spawnT.position, SpawnBoundsSize);
+        return spawnBounds.Contains(pos);
     }
 
     public bool IsVisible(GameObject npc)
     {
-        Camera tempCam = Camera.main;
-        if (tempCam != null)
-            activeCamera = tempCam;
-        var npcColliderBounds = npc.GetComponent<Collider>().bounds;
-        var activeCameraPlanes = GeometryUtility.CalculateFrustumPlanes(activeCamera);
-        return GeometryUtility.TestPlanesAABB(activeCameraPlanes, npcColliderBounds);
+        var activeAgents = SimulatorManager.Instance.AgentManager.ActiveAgents;
+        var npcColliderBounds = npc.GetComponent<NPCController>().MainCollider.bounds;
+
+        var activeCameraPlanes = GeometryUtility.CalculateFrustumPlanes(SimulatorCamera);
+        if (GeometryUtility.TestPlanesAABB(activeCameraPlanes, npcColliderBounds))
+            return true;
+
+        foreach (var activeAgent in activeAgents)
+        {
+            var activeAgentController = activeAgent.AgentGO.GetComponent<AgentController>();
+            foreach (var sensor in activeAgentController.AgentSensors)
+            {
+                if (sensor.CheckVisible(npcColliderBounds))
+                    return true;
+            }
+        }
+        return false;
     }
 
     private void DrawSpawnArea()
     {
-        Transform tempT = SimulatorManager.Instance.AgentManager.CurrentActiveAgent?.transform;
-        if (tempT != null)
-            spawnT = tempT;
+        var spawnT = SimulatorManager.Instance.AgentManager.CurrentActiveAgent?.transform;
+        spawnT = spawnT ?? transform;
         Gizmos.matrix = spawnT.localToWorldMatrix;
-        Gizmos.color = spawnColor;
-        Gizmos.DrawWireCube(Vector3.zero, spawnArea);
+        Gizmos.color = Color.yellow;
+        Gizmos.DrawWireCube(Vector3.zero, SpawnBoundsSize);
     }
 
     private void OnDrawGizmosSelected()
     {
-        if (!isSpawnAreaVisible) return;
+        if (!DebugSpawnArea) return;
         DrawSpawnArea();
     }
+    #endregion
+
+    #region network
+
+    private DistributedMessage GetSpawnMessage(NPCSpawnData data)
+    {
+        var message = MessagesPool.Instance.GetMessage(
+            ByteCompression.RotationMaxRequiredBytes +
+            ByteCompression.PositionRequiredBytes +
+            12 +
+            BytesStack.GetMaxByteCount(data.GenId));
+        var indexOfPrefab = NPCVehicles.FindIndex(npc => npc.Equals(data.Template));
+        message.AddressKey = Key;
+        message.Content.PushCompressedRotation(data.Rotation);
+        message.Content.PushCompressedPosition(data.Position);
+        message.Content.PushCompressedColor(data.Color, 1);
+        message.Content.PushInt(data.Seed);
+        message.Content.PushInt(indexOfPrefab, 2);
+        message.Content.PushString(data.GenId);
+        message.Content.PushEnum<NPCManagerCommandType>((int) NPCManagerCommandType.SpawnNPC);
+        message.Type = DistributedMessageType.ReliableOrdered;
+        return message;
+    }
+
+    private void SpawnNPCMock(string vehicleId, NPCS npcData, int npcControllerSeed, Color color, Vector3 position, Quaternion rotation)  // TODO can this use SpawnNPC method?
+    {
+        var go = new GameObject("NPC " + vehicleId);
+        go.SetActive(false);
+        go.transform.SetParent(transform);
+        go.layer = LayerMask.NameToLayer("NPC");
+        go.tag = "Car";
+        var rb = go.AddComponent<Rigidbody>();
+        rb.mass = 2000;
+        rb.interpolation = RigidbodyInterpolation.Interpolate;
+        rb.collisionDetectionMode = CollisionDetectionMode.Discrete;
+        rb.position = position;
+        rb.rotation = rotation;
+        go.transform.SetPositionAndRotation(position, rotation);
+        go.AddComponent<NPCController>();
+        var npc_name = Instantiate(npcData.Prefab, go.transform).name;
+        go.name = npc_name + vehicleId;
+        var NPCController = go.GetComponent<NPCController>();
+        NPCController.Size = npcData.NPCType;
+        NPCController.NPCColor = color;
+        NPCController.NPCLabel = GetNPCLabel(npc_name);
+        NPCController.id = vehicleId;
+        NPCController.Init(NPCSeedGenerator.Next());
+        CurrentPooledNPCs.Add(NPCController);
+
+        SimulatorManager.Instance.UpdateSegmentationColors(go);
+
+        //Add required components for cluster simulation
+        ClusterSimulationUtilities.AddDistributedComponents(go);
+    }
+
+    private DistributedMessage GetDespawnMessage(int orderNumber)
+    {
+        var message = MessagesPool.Instance.GetMessage(6);
+        message.AddressKey = Key;
+        message.Content.PushInt(orderNumber, 2);
+        message.Content.PushEnum<NPCManagerCommandType>((int) NPCManagerCommandType.DespawnNPC);
+        message.Type = DistributedMessageType.ReliableOrdered;
+        return message;
+    }
+
+    public void ReceiveMessage(IPeerManager sender, DistributedMessage distributedMessage)
+    {
+        var commandType = distributedMessage.Content.PopEnum<NPCManagerCommandType>();
+        switch (commandType)
+        {
+            case NPCManagerCommandType.SpawnNPC:
+                SpawnNPCMock(distributedMessage.Content.PopString(), NPCVehicles[distributedMessage.Content.PopInt(2)],
+                    distributedMessage.Content.PopInt(), distributedMessage.Content.PopDecompressedColor(1),
+                    distributedMessage.Content.PopDecompressedPosition(), distributedMessage.Content.PopDecompressedRotation());
+                break;
+            case NPCManagerCommandType.DespawnNPC:
+                var npcId = distributedMessage.Content.PopInt(2);
+                //TODO Preserve despawn command if it arrives before spawn command
+                if (npcId >= 0 && npcId < CurrentPooledNPCs.Count)
+                    Destroy(CurrentPooledNPCs[npcId].gameObject);
+                break;
+        }
+    }
+
+    public void UnicastMessage(IPEndPoint endPoint, DistributedMessage distributedMessage)
+    {
+        Loader.Instance.Network.MessagesManager?.UnicastMessage(endPoint, distributedMessage);
+    }
+
+    public void BroadcastMessage(DistributedMessage distributedMessage)
+    {
+        Loader.Instance.Network.MessagesManager?.BroadcastMessage(distributedMessage);
+    }
+
+    void IMessageSender.UnicastInitialMessages(IPEndPoint endPoint)
+    {
+        //TODO support reconnection - send instantiation messages to the peer
+    }
+
     #endregion
 }

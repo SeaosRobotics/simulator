@@ -15,7 +15,8 @@ using System.Collections.Concurrent;
 using WebSocketSharp;
 using SimpleJSON;
 using Simulator.Bridge.Data;
-using Simulator.Bridge.Ros.LGSVL;
+using Simulator.Bridge.Ros.Lgsvl;
+using Simulator.Bridge.Ros.Autoware;
 
 namespace Simulator.Bridge.Ros
 {
@@ -132,14 +133,29 @@ namespace Simulator.Bridge.Ros
                 }
                 else if (Version == 2)
                 {
-                    type = typeof(TwistStamped);
-                    converter = (JSONNode json) => Conversions.ConvertTo((TwistStamped)Unserialize(json, type));
+                    // Since there is no mapping acceleration to throttle, VehicleControlCommand is not supported for now.
+                    // After supporting it, VehicleControlCommand will replace RawControlCommand.
+                    // type = typeof(Autoware.VehicleControlCommand);
+                    // converter = (JSONNode json) => Conversions.ConvertTo((Autoware.VehicleControlCommand)Unserialize(json, type));
+
+                    type = typeof(Lgsvl.VehicleControlDataRos);
+                    converter = (JSONNode json) => Conversions.ConvertTo((Lgsvl.VehicleControlDataRos)Unserialize(json, type));
                 }
                 else
                 {
                     type = typeof(Autoware.VehicleCmd);
                     converter = (JSONNode json) => Conversions.ConvertTo((Autoware.VehicleCmd)Unserialize(json, type));
                 }
+            }
+            else if (type == typeof(VehicleStateData))
+            {
+                type = typeof(Lgsvl.VehicleStateDataRos);
+                converter = (JSONNode json) => Conversions.ConvertTo((Lgsvl.VehicleStateDataRos)Unserialize(json, type));
+            }
+            else if (BridgeConfig.bridgeConverters.ContainsKey(type))
+            {
+                converter = (JSONNode json) => (BridgeConfig.bridgeConverters[type] as IDataConverter<T>).GetConverter(this);
+                type = (BridgeConfig.bridgeConverters[type] as IDataConverter<T>).GetOutputType(this);
             }
             else
             {
@@ -211,28 +227,47 @@ namespace Simulator.Bridge.Ros
             }
             else if (type == typeof(Detected3DObjectData))
             {
-                type = typeof(LGSVL.Detection3DArray);
-                writer = new Writer<Detected3DObjectData, LGSVL.Detection3DArray>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+                type = typeof(Lgsvl.Detection3DArray);
+                writer = new Writer<Detected3DObjectData, Lgsvl.Detection3DArray>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
             }
             else if (type == typeof(Detected2DObjectData))
             {
-                type = typeof(LGSVL.Detection2DArray);
-                writer = new Writer<Detected2DObjectData, LGSVL.Detection2DArray>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+                type = typeof(Lgsvl.Detection2DArray);
+                writer = new Writer<Detected2DObjectData, Lgsvl.Detection2DArray>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
             }
             else if (type == typeof(SignalDataArray))
             {
-                type = typeof(LGSVL.SignalArray);
-                writer = new Writer<SignalDataArray, LGSVL.SignalArray>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+                type = typeof(Lgsvl.SignalArray);
+                writer = new Writer<SignalDataArray, Lgsvl.SignalArray>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
             }
             else if (type == typeof(DetectedRadarObjectData) && Apollo)
             {
-                type = typeof(Apollo.Drivers.ContiRadar);
-                writer = new Writer<DetectedRadarObjectData, Apollo.Drivers.ContiRadar>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+                if (Apollo)
+                {
+                    type = typeof(Apollo.Drivers.ContiRadar);
+                    writer = new Writer<DetectedRadarObjectData, Apollo.Drivers.ContiRadar>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+                }
+                else
+                {
+                    type = typeof(Lgsvl.DetectedRadarObjectArray);
+                    writer = new Writer<DetectedRadarObjectData, Lgsvl.DetectedRadarObjectArray>(this, topic, Conversions.ROS2ConvertFrom) as IWriter<T>;
+                }
             }
             else if (type == typeof(CanBusData))
             {
-                type = typeof(Apollo.ChassisMsg);
-                writer = new Writer<CanBusData, Apollo.ChassisMsg>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+                if (Version == 2 && !Apollo)
+                {
+                    // type = typeof(VehicleStateReport);
+                    // writer = new Writer<CanBusData, VehicleStateReport>(this, topic, Conversions.ROS2ReturnAutowareAutoConvertFrom) as IWriter<T>;
+
+                    type = typeof(CanBusDataRos);
+                    writer = new Writer<CanBusData, CanBusDataRos>(this, topic, Conversions.ROS2ReturnLgsvlConvertFrom) as IWriter<T>;
+                }
+                else
+                {
+                    type = typeof(Apollo.ChassisMsg);
+                    writer = new Writer<CanBusData, Apollo.ChassisMsg>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+                }
             }
             else if (type == typeof(GpsData))
             {
@@ -240,6 +275,11 @@ namespace Simulator.Bridge.Ros
                 {
                     type = typeof(Apollo.GnssBestPose);
                     writer = new Writer<GpsData, Apollo.GnssBestPose>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+                }
+                else if (Version == 2)
+                {
+                    type = typeof(NavSatFix);
+                    writer = new Writer<GpsData, NavSatFix>(this, topic, Conversions.ROS2ConvertFrom) as IWriter<T>;
                 }
                 else
                 {
@@ -278,10 +318,20 @@ namespace Simulator.Bridge.Ros
                     writer = new Writer<GpsOdometryData, Odometry>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
                 }
             }
+            else if (type == typeof(VehicleOdometryData))
+            {
+                type = typeof(VehicleOdometry);
+                writer =  new Writer<VehicleOdometryData, VehicleOdometry>(this, topic, Conversions.ROS2ConvertFrom) as IWriter<T>;
+            }
             else if (type == typeof(ClockData))
             {
                 type = typeof(Ros.Clock);
                 writer = new Writer<ClockData, Ros.Clock>(this, topic, Conversions.ConvertFrom) as IWriter<T>;
+            }
+            else if (BridgeConfig.bridgeConverters.ContainsKey(type))
+            {
+                writer = new Writer<T, object>(this, topic, (BridgeConfig.bridgeConverters[type] as IDataConverter<T>).GetConverter(this)) as IWriter<T>;
+                type = (BridgeConfig.bridgeConverters[type] as IDataConverter<T>).GetOutputType(this);
             }
             else
             {
@@ -327,7 +377,6 @@ namespace Simulator.Bridge.Ros
 
         public void AddService<Argument, Result>(string topic, Func<Argument, Result> callback)
         {
-            
             var argtype = typeof(Argument);
             var restype = typeof(Result);
 
@@ -719,7 +768,7 @@ namespace Simulator.Bridge.Ros
                 for (int i = 0; i < fields.Length; i++)
                 {
                     var field = fields[i];
-                    if (Version == 2 && type == typeof(Header))
+                    if (Version == 2 && type == typeof(Header) && field.Name == "seq")
                     {
                         continue;
                     }
@@ -771,6 +820,9 @@ namespace Simulator.Bridge.Ros
                 sb.Append("\"data\":");
                 SerializeInternal(message, type, sb);
                 sb.Append('}');
+            }else if (BridgeConfig.bridgeConverters.ContainsKey(type))
+            {
+                SerializeInternal(message, BridgeConfig.bridgeConverters[type].GetOutputType(this), sb);
             }
             else
             {

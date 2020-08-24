@@ -73,21 +73,25 @@ float4 EvaluateAtmosphericScattering(PositionInputs posInput, float3 V, float4 i
     float4 result = inputColor;
 
 #ifdef _ENABLE_FOG_ON_TRANSPARENT
-    float4 fog = EvaluateAtmosphericScattering(posInput, V); // Premultiplied alpha
+    float3 volColor, volOpacity;
+    EvaluateAtmosphericScattering(posInput, V, volColor, volOpacity); // Premultiplied alpha
 
     #if defined(_BLENDMODE_ALPHA)
         // Regular alpha blend need to multiply fog color by opacity (as we do src * src_a inside the shader)
-        // result.rgb = lerp(result.rgb, unpremul_fog.rgb * result.a, fog.a);
-        // result.rgb = result.rgb + fog.a * (unpremul_fog.rgb * result.a - result.rgb);
-        // result.rgb = result.rgb + fog.rgb * result.a - result.rgb * fog.a;
-        result.rgb = result.rgb * (1 - fog.a) + fog.rgb * result.a;
+        // result.rgb = lerp(result.rgb, unpremul_volColor * result.a, volOpacity);
+        // result.rgb = result.rgb + volOpacity * (unpremul_volColor * result.a - result.rgb);
+        // result.rgb = result.rgb + volColor * result.a - result.rgb * volOpacity;
+        result.rgb = result.rgb * (1 - volOpacity) + volColor * result.a;
     #elif defined(_BLENDMODE_ADD)
         // For additive, we just need to fade to black with fog density (black + background == background color == fog color)
-        result.rgb = result.rgb * (1.0 - fog.a);
+        result.rgb = result.rgb * (1.0 - volOpacity);
     #elif defined(_BLENDMODE_PRE_MULTIPLY)
         // For Pre-Multiplied Alpha Blend, we need to multiply fog color by src alpha to match regular alpha blending formula.
-        // result.rgb = lerp(result.rgb, unpremul_fog.rgb * result.a, fog.a);
-        result.rgb = result.rgb * (1 - fog.a) + fog.rgb * result.a;
+        // result.rgb = lerp(result.rgb, unpremul_volColor * result.a, volOpacity);
+        result.rgb = result.rgb * (1 - volOpacity) + volColor * result.a;
+        // Note: this formula for color is correct, assuming we apply the Over operator afterwards
+        // (see the appendix in the Deep Compositing paper). But do we?
+        // Additionally, we do not modify the alpha here, which is most certainly WRONG.
     #endif
 #else
     // Evaluation of fog for opaque objects is currently done in a full screen pass independent from any material parameters.
@@ -114,6 +118,43 @@ void DoAlphaTest(float alpha, float alphaCutoff)
 #if !defined(SHADERPASS_FORWARD_BYPASS_ALPHA_TEST) && !defined(SHADERPASS_GBUFFER_BYPASS_ALPHA_TEST) && !(SHADERPASS == SHADERPASS_LIGHT_TRANSPORT)
     clip(alpha - alphaCutoff);
 #endif
+}
+
+// This function is the alternative version used for ray tracing
+void DoAlphaTest(float alpha, float alphaCutoff, out bool alphaTestResult)
+{
+    alphaTestResult = alpha > alphaCutoff;
+}
+//-----------------------------------------------------------------------------
+// LoD Fade
+//-----------------------------------------------------------------------------
+
+// Helper for LODDitheringTransition.
+uint2 ComputeFadeMaskSeed(float3 V, uint2 positionSS)
+{
+    uint2 fadeMaskSeed;
+
+    if (IsPerspectiveProjection())
+    {
+        // Start with the world-space direction V. It is independent from the orientation of the camera,
+        // and only depends on the position of the camera and the position of the fragment.
+        // Now, project and transform it into [-1, 1].
+        float2 pv = PackNormalOctQuadEncode(V);
+        // Rescale it to account for the resolution of the screen.
+        pv *= _ScreenSize.xy;
+        // The camera only sees a small portion of the sphere, limited by hFoV and vFoV.
+        // Therefore, we must rescale again (before quantization), roughly, by 1/tan(FoV/2).
+        pv *= UNITY_MATRIX_P._m00_m11;
+        // Truncate and quantize.
+        fadeMaskSeed = asuint((int2)pv);
+    }
+    else
+    {
+        // Can't use the view direction, it is the same across the entire screen.
+        fadeMaskSeed = positionSS;
+    }
+
+    return fadeMaskSeed;
 }
 
 //-----------------------------------------------------------------------------

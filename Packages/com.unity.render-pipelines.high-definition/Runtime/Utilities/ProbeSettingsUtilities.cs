@@ -1,7 +1,6 @@
 using System;
-using UnityEngine.Rendering;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
     /// <summary>Utilities for <see cref="ProbeSettings"/></summary>
     public static class ProbeSettingsUtilities
@@ -20,14 +19,18 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         /// <param name="probePosition">Position to apply. (Read only)</param>
         /// <param name="cameraSettings">Settings to update.</param>
         /// <param name="cameraPosition">Position to update.</param>
+        /// <param name="referenceFieldOfView">Reference field of view</param>
+        /// <param name="referenceAspect">Reference aspect ratio</param>
         public static void ApplySettings(
             ref ProbeSettings settings,                             // In Parameter
             ref ProbeCapturePositionSettings probePosition,         // In parameter
             ref CameraSettings cameraSettings,                      // InOut parameter
-            ref CameraPositionSettings cameraPosition               // InOut parameter
+            ref CameraPositionSettings cameraPosition,              // InOut parameter
+            float referenceFieldOfView = 90,
+            float referenceAspect = 1
         )
         {
-            cameraSettings = settings.camera;
+            cameraSettings = settings.cameraSettings;
             // Compute the modes for each probe type
             PositionMode positionMode;
             bool useReferenceTransformAsNearClipPlane;
@@ -36,6 +39,11 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                 case ProbeSettings.ProbeType.PlanarProbe:
                     positionMode = PositionMode.MirrorReferenceTransformWithProbePlane;
                     useReferenceTransformAsNearClipPlane = true;
+                    ApplyPlanarFrustumHandling(
+                        ref settings, ref probePosition,
+                        ref cameraSettings, ref cameraPosition,
+                        referenceFieldOfView, referenceAspect
+                    );
                     break;
                 case ProbeSettings.ProbeType.ReflectionProbe:
                     positionMode = PositionMode.UseProbeTransform;
@@ -85,6 +93,9 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                 );
             }
 
+            // Propagate the desired custom exposure
+            cameraSettings.probeRangeCompressionFactor = settings.lighting.rangeCompressionFactor;
+
             // Frame Settings Overrides
             switch (settings.mode)
             {
@@ -102,9 +113,6 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             {
                 case ProbeSettings.ProbeType.ReflectionProbe:
                     cameraSettings.customRenderingSettings = true;
-                    // Disable specular lighting for reflection probes, they must not have view dependent information when baking
-                    cameraSettings.renderingPathCustomFrameSettings.SetEnabled(FrameSettingsField.SpecularLighting, false);
-                    cameraSettings.renderingPathCustomFrameSettingsOverrideMask.mask[(int)FrameSettingsField.SpecularLighting] = true;
                     break;
             }
         }
@@ -120,12 +128,22 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             var proxyMatrix = Matrix4x4.TRS(probePosition.proxyPosition, probePosition.proxyRotation, Vector3.one);
             var mirrorPosition = proxyMatrix.MultiplyPoint(settings.proxySettings.mirrorPositionProxySpace);
             var mirrorForward = proxyMatrix.MultiplyVector(settings.proxySettings.mirrorRotationProxySpace * Vector3.forward);
+            var reflectionMatrix = GeometryUtils.CalculateReflectionMatrix(mirrorPosition, mirrorForward);
 
             var worldToCameraRHS = GeometryUtils.CalculateWorldToCameraMatrixRHS(
                 probePosition.referencePosition,
+
+                // TODO: The capture camera should look at a better direction to only capture texels that
+                //   will actually be sampled.
+                //   The position it should look at is the center of the visible influence volume of the probe.
+                //   (visible influence volume: the intersection of the frustum with the probe's influence volume).
+                //   But this is not trivial to get.
+                //   So currently, only look in the mirrored direction of the reference. This will capture
+                //   more pixels than we want with a lesser resolution, but still work for most cases.
+
+                // Note: looking at the center of the influence volume don't work in all cases (see case 1157921)
                 probePosition.referenceRotation
             );
-            var reflectionMatrix = GeometryUtils.CalculateReflectionMatrix(mirrorPosition, mirrorForward);
             cameraPosition.worldToCameraMatrix = worldToCameraRHS * reflectionMatrix;
             // We must invert the culling because we performed a plane reflection
             cameraSettings.invertFaceCulling = true;
@@ -135,6 +153,46 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             var forward = reflectionMatrix.MultiplyVector(probePosition.referenceRotation * Vector3.forward);
             var up = reflectionMatrix.MultiplyVector(probePosition.referenceRotation * Vector3.up);
             cameraPosition.rotation = Quaternion.LookRotation(forward, up);
+        }
+
+        internal static void ApplyPlanarFrustumHandling(
+            ref ProbeSettings settings,                             // In Parameter
+            ref ProbeCapturePositionSettings probePosition,         // In parameter
+            ref CameraSettings cameraSettings,                      // InOut parameter
+            ref CameraPositionSettings cameraPosition,              // InOut parameter
+            float referenceFieldOfView, float referenceAspect
+        )
+        {
+            const float k_MaxFieldOfView = 170;
+
+            var proxyMatrix = Matrix4x4.TRS(probePosition.proxyPosition, probePosition.proxyRotation, Vector3.one);
+            var mirrorPosition = proxyMatrix.MultiplyPoint(settings.proxySettings.mirrorPositionProxySpace);
+
+            cameraSettings.frustum.aspect = referenceAspect;
+
+            switch (settings.frustum.fieldOfViewMode)
+            {
+                case ProbeSettings.Frustum.FOVMode.Fixed:
+                    cameraSettings.frustum.fieldOfView = settings.frustum.fixedValue;
+                    break;
+                case ProbeSettings.Frustum.FOVMode.Viewer:
+                    cameraSettings.frustum.fieldOfView = Mathf.Min(
+                        referenceFieldOfView * settings.frustum.viewerScale,
+                        k_MaxFieldOfView
+                    );
+                    break;
+                case ProbeSettings.Frustum.FOVMode.Automatic:
+                    // Dynamic FOV tries to adapt the FOV to have maximum usage of the target render texture
+                    //     (A lot of pixel can be discarded in the render texture). This way we can have a greater
+                    //     resolution for the planar with the same cost.
+                    cameraSettings.frustum.fieldOfView = Mathf.Min(
+                            settings.influence.ComputeFOVAt(
+                            probePosition.referencePosition, mirrorPosition, probePosition.influenceToWorld
+                        ) * settings.frustum.automaticScale,
+                            k_MaxFieldOfView
+                    );
+                    break;
+            }
         }
 
         internal static void ApplyObliqueNearClipPlane(
@@ -153,8 +211,9 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                 mirrorPosition,
                 mirrorForward
             );
+
             var sourceProjection = Matrix4x4.Perspective(
-                cameraSettings.frustum.fieldOfView,
+                HDUtils.ClampFOV(cameraSettings.frustum.fieldOfView),
                 cameraSettings.frustum.aspect,
                 cameraSettings.frustum.nearClipPlane,
                 cameraSettings.frustum.farClipPlane

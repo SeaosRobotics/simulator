@@ -1,5 +1,11 @@
 Shader "Hidden/HDRP/CameraMotionVectors"
 {
+    Properties
+    {
+        [HideInInspector] _StencilRef("_StencilRef", Int) = 128
+        [HideInInspector] _StencilMask("_StencilMask", Int) = 128
+    }
+
     HLSLINCLUDE
 
         #pragma target 4.5
@@ -9,7 +15,7 @@ Shader "Hidden/HDRP/CameraMotionVectors"
         #include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/ShaderPass/FragInputs.hlsl"
         #include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/ShaderPass/VaryingMesh.hlsl"
         #include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/ShaderPass/VertMesh.hlsl"
-        #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Builtin/BuiltinData.hlsl"
+        #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Builtin/BuiltinData.hlsl"        
 
         struct Attributes
         {
@@ -38,7 +44,7 @@ Shader "Hidden/HDRP/CameraMotionVectors"
 
             float depth = LoadCameraDepth(input.positionCS.xy);
 
-            PositionInputs posInput = GetPositionInput_Stereo(input.positionCS.xy, _ScreenSize.zw, depth, UNITY_MATRIX_I_VP, UNITY_MATRIX_V, unity_StereoEyeIndex);
+            PositionInputs posInput = GetPositionInput(input.positionCS.xy, _ScreenSize.zw, depth, UNITY_MATRIX_I_VP, UNITY_MATRIX_V);
 
             float4 worldPos = float4(posInput.positionWS, 1.0);
             float4 prevPos = worldPos;
@@ -54,8 +60,6 @@ Shader "Hidden/HDRP/CameraMotionVectors"
 #if UNITY_UV_STARTS_AT_TOP
             motionVector.y = -motionVector.y;
 #endif
-
-            motionVector.x = motionVector.x * _TextureWidthScaling.y; // _TextureWidthScaling = (2.0, 0.5) for SinglePassDoubleWide (stereo) and (1.0, 1.0) otherwise
 
             // Convert motionVector from Clip space (-1..1) to NDC 0..1 space
             // Note it doesn't mean we don't have negative value, we store negative or positive offset in NDC space.
@@ -74,14 +78,15 @@ Shader "Hidden/HDRP/CameraMotionVectors"
             // We will perform camera motion vector only where there is no object motion vectors
             Stencil
             {
-                WriteMask 128
-                ReadMask 128
-                Ref  128 // StencilBitMask.ObjectMotionVectors
+                WriteMask [_StencilMask]
+                ReadMask [_StencilMask]
+                Ref [_StencilRef]
                 Comp NotEqual
                 Fail Zero   // We won't need the bit anymore.
             }
 
-            Cull Off ZWrite Off ZTest Always
+            Cull Off ZWrite Off
+            ZTest Less // Required for XR occlusion mesh optimization
 
             HLSLPROGRAM
 

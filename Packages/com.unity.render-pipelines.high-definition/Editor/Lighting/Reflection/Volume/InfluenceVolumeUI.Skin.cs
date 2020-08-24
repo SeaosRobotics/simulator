@@ -1,7 +1,6 @@
-using UnityEditor.Rendering;
 using UnityEngine;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline
+namespace UnityEditor.Rendering.HighDefinition
 {
 
     partial class InfluenceVolumeUI
@@ -20,6 +19,10 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             new Color(0f, .5f, 0f, 1f),
             new Color(0f, 0f, .5f, 1f)
         };
+
+        static readonly GUIContent manipulatonTypeContent = EditorGUIUtility.TrTextContent("Per Axis Control", "When checked, each face can be manipulated separatly. This also include fading options.");
+
+        static readonly string[] displayedManipulationOptions = new[] { "Simplified", "Advanced" };
 
         static readonly GUIContent shapeContent = EditorGUIUtility.TrTextContent("Shape", "Specifies the shape of the Influence Volume.");
         static readonly GUIContent boxSizeContent = EditorGUIUtility.TrTextContent("Box Size", "Sets the size of the Box Influence Volume on a per axis basis. The Transform Scale does not affect these dimensions.");

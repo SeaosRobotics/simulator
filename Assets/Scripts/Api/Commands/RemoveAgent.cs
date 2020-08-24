@@ -8,10 +8,12 @@
 using SimpleJSON;
 using UnityEngine;
 using Simulator.Sensors;
+using Simulator.Network.Core.Identification;
 
 namespace Simulator.Api.Commands
 {
-    class RemoveAgent : ICommand
+
+    class RemoveAgent : IDistributedCommand
     {
         public string Name => "simulator/agent/remove";
 
@@ -24,19 +26,16 @@ namespace Simulator.Api.Commands
             {
                 var sensors = obj.GetComponentsInChildren<SensorBase>();
                 
-                foreach (var sensor in sensors)
-                {
-                    var suid = api.SensorUID[sensor];
-                    api.Sensors.Remove(suid);
-                    api.SensorUID.Remove(sensor);
-                }
+                if (SimulatorManager.InstanceAvailable)
+                    foreach (var sensor in sensors)
+                        SimulatorManager.Instance.Sensors.UnregisterSensor(sensor);
 
                 SimulatorManager.Instance.AgentManager.DestroyAgent(obj);
 
                 var npc = obj.GetComponent<NPCController>();
                 if (npc != null)
                 {
-                    SimulatorManager.Instance.NPCManager.DespawnVehicle(npc);
+                    SimulatorManager.Instance.NPCManager.DestroyNPC(npc);
                 }
 
                 var ped = obj.GetComponent<PedestrianController>();
@@ -47,12 +46,12 @@ namespace Simulator.Api.Commands
 
                 api.Agents.Remove(uid);
                 api.AgentUID.Remove(obj);
-                api.SendResult();
+                api.SendResult(this);
                 SIM.LogAPI(SIM.API.RemoveAgent, obj.name);
             }
             else
             {
-                api.SendError($"Agent '{uid}' not found");
+                api.SendError(this, $"Agent '{uid}' not found");
             }
         }
     }

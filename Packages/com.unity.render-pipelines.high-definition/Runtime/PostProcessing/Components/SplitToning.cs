@@ -1,20 +1,35 @@
 using System;
-using UnityEngine.Rendering;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
+    /// <summary>
+    /// A volume component that holds settings for the Split Toning effect.
+    /// </summary>
     [Serializable, VolumeComponentMenu("Post-processing/Split Toning")]
     public sealed class SplitToning : VolumeComponent, IPostProcessComponent
     {
-        [Tooltip("The color to use for shadows.")]
+        /// <summary>
+        /// Specifies the color to use for shadows.
+        /// </summary>
+        [Tooltip("Specifies the color to use for shadows.")]
         public ColorParameter shadows = new ColorParameter(Color.grey, false, false, true);
-        
-        [Tooltip("The color to use for highlights.")]
+
+        /// <summary>
+        /// Specifies the color to use for highlights.
+        /// </summary>
+        [Tooltip("Specifies the color to use for highlights.")]
         public ColorParameter highlights = new ColorParameter(Color.grey, false, false, true);
 
-        [Tooltip("Balance between the colors in the highlights and shadows.")]
+        /// <summary>
+        /// Controls the balance between the colors in the highlights and shadows.
+        /// </summary>
+        [Tooltip("Controls the balance between the colors in the highlights and shadows.")]
         public ClampedFloatParameter balance = new ClampedFloatParameter(0f, -100f, 100f);
 
+        /// <summary>
+        /// Tells if the effect needs to be rendered or not.
+        /// </summary>
+        /// <returns><c>true</c> if the effect should be rendered, <c>false</c> otherwise.</returns>
         public bool IsActive()
         {
             return shadows != Color.grey

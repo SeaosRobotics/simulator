@@ -10,6 +10,7 @@ using Simulator.Bridge.Data;
 using Simulator.Utilities;
 using UnityEngine;
 using Simulator.Sensors.UI;
+using System.Collections.Generic;
 
 namespace Simulator.Sensors
 {
@@ -20,11 +21,13 @@ namespace Simulator.Sensors
         [Range(1.0f, 100f)]
         public float Frequency = 12.5f;
 
-        float NextSend;
+        double NextSend;
         uint SendSequence;
 
         IBridge Bridge;
         IWriter<GpsInsData> Writer;
+        
+        public override SensorDistributionType DistributionType => SensorDistributionType.LowLoad;
 
         public override void OnBridgeSetup(IBridge bridge)
         {
@@ -34,7 +37,7 @@ namespace Simulator.Sensors
 
         public void Start()
         {
-            NextSend = Time.time + 1.0f / Frequency;
+            NextSend = SimulatorManager.Instance.CurrentTime + 1.0f / Frequency;
         }
 
         void Update()
@@ -44,11 +47,11 @@ namespace Simulator.Sensors
                 return;
             }
 
-            if (Time.time < NextSend)
+            if (SimulatorManager.Instance.CurrentTime < NextSend)
             {
                 return;
             }
-            NextSend = Time.time + 1.0f / Frequency;
+            NextSend = SimulatorManager.Instance.CurrentTime + 1.0f / Frequency;
             
             Writer.Write(new GpsInsData()
             {
@@ -64,7 +67,14 @@ namespace Simulator.Sensors
 
         public override void OnVisualize(Visualizer visualizer)
         {
-            //
+            Debug.Assert(visualizer != null);
+
+            var graphData = new Dictionary<string, object>()
+            {
+                {"Status", 3},
+                {"Position Type", 56}
+            };
+            visualizer.UpdateGraphValues(graphData);
         }
 
         public override void OnVisualizeToggle(bool state)

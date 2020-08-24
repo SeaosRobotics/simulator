@@ -17,7 +17,8 @@ public class MapManager : MonoBehaviour
     public List<MapLane> trafficLanes = new List<MapLane>();
     [System.NonSerialized]
     public List<MapIntersection> intersections = new List<MapIntersection>();
-    public float totalLaneDist { get; private set; } = 0f;
+    [System.NonSerialized]
+    public List<MapPedestrian> pedestrianLanes = new List<MapPedestrian>();
 
     private MapManagerData mapData;
 
@@ -39,7 +40,8 @@ public class MapManager : MonoBehaviour
 
         trafficLanes = mapData.GetTrafficLanes();
         intersections = mapData.GetIntersections();
-        totalLaneDist = MapManagerData.GetTotalLaneDistance(trafficLanes);
+        pedestrianLanes = mapData.GetPedestrianLanes();
+
         trafficLanes.ForEach(trafficLane => trafficLane.SetTrigger());
         intersections.ForEach(intersection => intersection.SetTriggerAndState());
     }
@@ -70,6 +72,29 @@ public class MapManager : MonoBehaviour
             }
         }
         return result;
+    }
+
+    public int GetLaneNextIndex(Vector3 position, MapLane lane)
+    {
+        float minDist = float.PositiveInfinity;
+        int index = -1;
+        
+        for (int i = 0; i < lane.mapWorldPositions.Count - 1; i++)
+        {
+            var p0 = lane.mapWorldPositions[i];
+            var p1 = lane.mapWorldPositions[i + 1];
+
+            var p = Utility.ClosetPointOnSegment(p0, p1, position);
+
+            float d = Vector3.SqrMagnitude(position - p);
+            if (d < minDist)
+            {
+                minDist = d;
+                index = i + 1;
+            }
+        }
+
+        return index;
     }
 
     // api
@@ -106,30 +131,31 @@ public class MapManager : MonoBehaviour
         return trafficLanes == null || trafficLanes.Count == 0 ? null : trafficLanes[index];
     }
 
+    public MapPedestrian GetPedPath(int index)
+    {
+        return pedestrianLanes == null || pedestrianLanes.Count == 0 ? null : pedestrianLanes[index];
+    }
+
     public void Reset()
     {
-        var api = ApiManager.Instance;
-        var controllables = SimulatorManager.Instance.Controllables;
-        controllables.Clear();
-
         foreach (var intersection in intersections)
         {
             intersection.npcsInIntersection.Clear();
             intersection.stopQueue.Clear();
-
-            if (!intersection.isStopSignIntersection)
-            {
-                foreach (var signal in intersection.GetSignals())
-                {
-                    var uid = System.Guid.NewGuid().ToString();
-                    api.Controllables.Add(uid, signal);
-                    api.ControllablesUID.Add(signal, uid);
-                    controllables.Add(signal);
-                }
-            }
-
             intersection.SetTriggerAndState();
             intersection.StartTrafficLightLoop();
+        }
+    }
+
+    public void RemoveNPCFromIntersections(NPCController npc)
+    {
+        foreach (var intersection in intersections)
+        {
+            intersection.ExitIntersectionList(npc);
+            if (intersection.isStopSignIntersection)
+            {
+                intersection.ExitStopSignQueue(npc);
+            }
         }
     }
 }

@@ -1,9 +1,9 @@
 using System;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
     [GenerateHLSL]
-    public class DiffusionProfileConstants
+    class DiffusionProfileConstants
     {
         public const int DIFFUSION_PROFILE_COUNT      = 16; // Max. number of profiles, including the slot taken by the neutral profile
         public const int DIFFUSION_PROFILE_NEUTRAL_ID = 0;  // Does not result in blurring
@@ -13,7 +13,7 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
     }
 
     [Serializable]
-    public sealed class DiffusionProfile : IEquatable<DiffusionProfile>
+    class DiffusionProfile : IEquatable<DiffusionProfile>
     {
         public enum TexturingMode : uint
         {
@@ -26,8 +26,6 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             Regular = 0,
             ThinObject = 1
         }
-
-        public string name;
 
         [ColorUsage(false, true)]
         public Color            scatteringDistance;         // Per color channel (no meaningful units)
@@ -49,10 +47,9 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         // Unique hash used in shaders to identify the index in the diffusion profile array
         public uint             hash = 0;
 
-        public DiffusionProfile(string name)
+        // Here we need to have one parameter in the diffusion profile parameter because the deserialization call the default constructor
+        public DiffusionProfile(bool dontUseDefaultConstructor)
         {
-            this.name          = name;
-
             scatteringDistance = Color.grey;
             transmissionTint   = Color.white;
             texturingMode      = TexturingMode.PreAndPostScatter;
@@ -62,7 +59,7 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             ior                = 1.4f; // Typical value for skin specular reflectance
         }
 
-        public void Validate()
+        internal void Validate()
         {
             thicknessRemap.y = Mathf.Max(thicknessRemap.y, 0f);
             thicknessRemap.x = Mathf.Clamp(thicknessRemap.x, 0f, thicknessRemap.y);
@@ -73,7 +70,7 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         }
 
         // Ref: Approximate Reflectance Profiles for Efficient Subsurface Scattering by Pixar.
-        public void UpdateKernel()
+        void UpdateKernel()
         {
             if (filterKernelNearField == null || filterKernelNearField.Length != DiffusionProfileConstants.SSS_N_SAMPLES_NEAR_FIELD)
                 filterKernelNearField = new Vector2[DiffusionProfileConstants.SSS_N_SAMPLES_NEAR_FIELD];
@@ -201,34 +198,43 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         }
     }
 
-    public sealed partial class DiffusionProfileSettings : ScriptableObject
+    [HelpURL(Documentation.baseURL + Documentation.version + Documentation.subURL + "Diffusion-Profile" + Documentation.endURL)]
+    internal partial class DiffusionProfileSettings : ScriptableObject
     {
-        public DiffusionProfile profile;
+        [SerializeField]
+        internal DiffusionProfile profile;
 
-        [NonSerialized] public Vector4 thicknessRemaps;           // Remap: 0 = start, 1 = end - start
-        [NonSerialized] public Vector4 worldScales;               // X = meters per world unit; Y = world units per meter
-        [NonSerialized] public Vector4 shapeParams;               // RGB = S = 1 / D, A = filter radius
-        [NonSerialized] public Vector4 transmissionTintsAndFresnel0; // RGB = color, A = fresnel0
-        [NonSerialized] public Vector4 disabledTransmissionTintsAndFresnel0; // RGB = black, A = fresnel0 - For debug to remove the transmission
-        [NonSerialized] public Vector4[] filterKernels;             // XY = near field, ZW = far field; 0 = radius, 1 = reciprocal of the PDF
-        [NonSerialized] public int updateCount;
-        
+        [NonSerialized] internal Vector4 thicknessRemaps;           // Remap: 0 = start, 1 = end - start
+        [NonSerialized] internal Vector4 worldScales;               // X = meters per world unit; Y = world units per meter
+        [NonSerialized] internal Vector4 shapeParams;               // RGB = S = 1 / D, A = filter radius
+        [NonSerialized] internal Vector4 transmissionTintsAndFresnel0; // RGB = color, A = fresnel0
+        [NonSerialized] internal Vector4 disabledTransmissionTintsAndFresnel0; // RGB = black, A = fresnel0 - For debug to remove the transmission
+        [NonSerialized] internal Vector4[] filterKernels;             // XY = near field, ZW = far field; 0 = radius, 1 = reciprocal of the PDF
+        [NonSerialized] internal int updateCount;
+
         void OnEnable()
         {
             if (profile == null)
-                profile = new DiffusionProfile("Diffusion Profile");
+                profile = new DiffusionProfile(true);
 
             profile.Validate();
             UpdateCache();
 
 #if UNITY_EDITOR
-            if (m_Version != Version.Last)
-                TryToUpgrade();
-            UnityEditor.Experimental.Rendering.HDPipeline.DiffusionProfileHashTable.UpdateDiffusionProfileHashNow(this);
+            if (m_Version != MigrationDescription.LastVersion<Version>())
+            {
+                // We delay the upgrade of the diffusion profile because in the OnEnable we are still
+                // in the import of the current diffusion profile, so we can't create new assets of the same
+                // type from here otherwise it will freeze the editor in an infinite import loop.
+                // Thus we delay the upgrade of one editor frame so the import of this asset is finished.
+                UnityEditor.EditorApplication.delayCall += TryToUpgrade;
+            }
+
+            UnityEditor.Rendering.HighDefinition.DiffusionProfileHashTable.UpdateDiffusionProfileHashNow(this);
 #endif
         }
 
-        public void UpdateCache()
+        internal void UpdateCache()
         {
             if (filterKernels == null)
                 filterKernels = new Vector4[DiffusionProfileConstants.SSS_N_SAMPLES_NEAR_FIELD];
@@ -262,12 +268,14 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             updateCount++;
         }
 
-        public bool HasChanged(int update)
+        internal bool HasChanged(int update)
         {
             return update == updateCount;
         }
 
-        // Initialize the settings for the default diffusion  profile
+        /// <summary>
+        /// Initialize the settings for the default diffusion profile.
+        /// </summary>
         public void SetDefaultParams()
         {
             worldScales = Vector4.one;

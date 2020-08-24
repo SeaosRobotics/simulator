@@ -5,7 +5,18 @@
 #ifndef AXF_CS_HLSL
 #define AXF_CS_HLSL
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.AxF+SurfaceData:  static fields
+// UnityEngine.Rendering.HighDefinition.AxF+FeatureFlags:  static fields
+//
+#define FEATUREFLAGS_AXF_ANISOTROPY (1)
+#define FEATUREFLAGS_AXF_CLEAR_COAT (2)
+#define FEATUREFLAGS_AXF_CLEAR_COAT_REFRACTION (4)
+#define FEATUREFLAGS_AXF_USE_HEIGHT_MAP (8)
+#define FEATUREFLAGS_AXF_BRDFCOLOR_DIAGONAL_CLAMP (16)
+#define FEATUREFLAGS_AXF_HONOR_MIN_ROUGHNESS (256)
+#define FEATUREFLAGS_AXF_HONOR_MIN_ROUGHNESS_COAT (512)
+
+//
+// UnityEngine.Rendering.HighDefinition.AxF+SurfaceData:  static fields
 //
 #define DEBUGVIEW_AXF_SURFACEDATA_NORMAL (1200)
 #define DEBUGVIEW_AXF_SURFACEDATA_NORMAL_VIEW_SPACE (1201)
@@ -25,7 +36,7 @@
 #define DEBUGVIEW_AXF_SURFACEDATA_GEOMETRIC_NORMAL_VIEW_SPACE (1215)
 
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.AxF+BSDFData:  static fields
+// UnityEngine.Rendering.HighDefinition.AxF+BSDFData:  static fields
 //
 #define DEBUGVIEW_AXF_BSDFDATA_NORMAL_WS (1250)
 #define DEBUGVIEW_AXF_BSDFDATA_NORMAL_VIEW_SPACE (1251)
@@ -44,7 +55,7 @@
 #define DEBUGVIEW_AXF_BSDFDATA_GEOMETRIC_NORMAL (1264)
 #define DEBUGVIEW_AXF_BSDFDATA_GEOMETRIC_NORMAL_VIEW_SPACE (1265)
 
-// Generated from UnityEngine.Experimental.Rendering.HDPipeline.AxF+SurfaceData
+// Generated from UnityEngine.Rendering.HighDefinition.AxF+SurfaceData
 // PackingRules = Exact
 struct SurfaceData
 {
@@ -64,7 +75,7 @@ struct SurfaceData
     float3 geomNormalWS;
 };
 
-// Generated from UnityEngine.Experimental.Rendering.HDPipeline.AxF+BSDFData
+// Generated from UnityEngine.Rendering.HighDefinition.AxF+BSDFData
 // PackingRules = Exact
 struct BSDFData
 {

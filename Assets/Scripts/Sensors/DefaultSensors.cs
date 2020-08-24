@@ -25,7 +25,8 @@ namespace Simulator.Sensors
             @"{""type"": ""Color Camera"", ""name"": ""Main Camera"",
             ""params"": {""Width"": 1920, ""Height"": 1080, ""Frequency"": 15, ""JpegQuality"": 75, ""FieldOfView"": 50, ""MinDistance"": 0.1, ""MaxDistance"": 1000, ""Topic"": ""/simulator/camera_node/image/compressed"", ""Frame"": ""camera""},
             ""transform"": {""x"": 0, ""y"": 1.7, ""z"": -0.2, ""pitch"": 0, ""yaw"": 0, ""roll"": 0}}",
-            @"{""type"": ""Manual Control"", ""name"": ""Manual Car Control""}",
+            @"{""type"": ""Keyboard Control"", ""name"": ""Keyboard Car Control""}",
+            @"{""type"": ""Wheel Control"", ""name"": ""Wheel Car Control""}",
             @"{""type"": ""Vehicle Control"", ""name"": ""Autoware Car Control"",
             ""params"": {""Topic"": ""/vehicle_cmd""} }"
         ) + "]";
@@ -55,7 +56,8 @@ namespace Simulator.Sensors
             @"{""type"": ""Color Camera"", ""name"": ""Telephoto Camera"",
             ""params"": {""Width"": 1920, ""Height"": 1080, ""Frequency"": 15, ""JpegQuality"": 75, ""FieldOfView"": 10, ""MinDistance"": 0.1, ""MaxDistance"": 1000, ""Topic"": ""/apollo/sensor/camera/traffic/image_long/compressed""},
             ""transform"": {""x"": 0, ""y"": 1.7, ""z"": -0.2, ""pitch"": -4, ""yaw"": 0, ""roll"": 0}}",
-            @"{""type"": ""Manual Control"", ""name"": ""Manual Car Control""}",
+            @"{""type"": ""Keyboard Control"", ""name"": ""Keyboard Car Control""}",
+            @"{""type"": ""Wheel Control"", ""name"": ""Wheel Car Control""}",
             @"{""type"": ""Vehicle Control"", ""name"": ""Apollo Car Control"",
             ""params"": {""Topic"": ""/apollo/control""} }"
         ) + "]";
@@ -81,14 +83,15 @@ namespace Simulator.Sensors
                ""transform"": {""x"": 0, ""y"": 0.689, ""z"": 2.272, ""pitch"": 0, ""yaw"": 0, ""roll"": 0}}",
             @"{""type"": ""Lidar"", ""name"": ""Lidar"",
             ""params"": {""LaserCount"": 32, ""MinDistance"": 0.5, ""MaxDistance"": 100, ""RotationFrequency"": 10, ""MeasurementsPerRotation"": 360, ""FieldOfView"": 41.33, ""CenterAngle"": 10, ""Compensated"": true, ""PointColor"": ""#ff000000"", ""Topic"": ""/apollo/sensor/lidar128/compensator/PointCloud2"", ""Frame"": ""velodyne""},
-            ""transform"": {""x"": 0, ""y"": 2.312, ""z"": -0.3679201, ""pitch"": 0, ""yaw"": 0, ""roll"": 0}}",
+            ""transform"": {""x"": 0, ""y"": 2.312, ""z"": -0.11, ""pitch"": 0, ""yaw"": 0, ""roll"": 0}}",
             @"{""type"": ""Color Camera"", ""name"": ""Main Camera"",
             ""params"": {""Width"": 1920, ""Height"": 1080, ""Frequency"": 15, ""JpegQuality"": 75, ""FieldOfView"": 50, ""MinDistance"": 0.1, ""MaxDistance"": 1000, ""Topic"": ""/apollo/sensor/camera/front_6mm/image/compressed""},
             ""transform"": {""x"": 0, ""y"": 1.7, ""z"": -0.2, ""pitch"": 0, ""yaw"": 0, ""roll"": 0}}",
             @"{""type"": ""Color Camera"", ""name"": ""Telephoto Camera"",
             ""params"": {""Width"": 1920, ""Height"": 1080, ""Frequency"": 15, ""JpegQuality"": 75, ""FieldOfView"": 10, ""MinDistance"": 0.1, ""MaxDistance"": 1000, ""Topic"": ""/apollo/sensor/camera/front_12mm/image/compressed""},
             ""transform"": {""x"": 0, ""y"": 1.7, ""z"": -0.2, ""pitch"": -4, ""yaw"": 0, ""roll"": 0}}",
-            @"{""type"": ""Manual Control"", ""name"": ""Manual Car Control""}",
+            @"{""type"": ""Keyboard Control"", ""name"": ""Keyboard Car Control""}",
+            @"{""type"": ""Wheel Control"", ""name"": ""Wheel Car Control""}",
             @"{""type"": ""Vehicle Control"", ""name"": ""Apollo Car Control"",
             ""params"": {""Topic"": ""/apollo/control""} }"
         ) + "]";
@@ -106,8 +109,8 @@ namespace Simulator.Sensors
             ""params"": { ""Width"": 1920, ""Height"": 1080, ""Frequency"": 15, ""JpegQuality"": 75, ""FieldOfView"": 50, ""MinDistance"": 0.1, ""MaxDistance"": 1000, ""Topic"": ""/simulator/depth_camera/compressed""},
             ""transform"": { ""x"": 0, ""y"": 1.7, ""z"": -0.2, ""pitch"": 0, ""yaw"": 0, ""roll"": 0}}",
 
-            @"{""type"": ""Semantic Camera"", ""name"": ""Semantic Camera"",
-            ""params"": { ""Width"": 1920, ""Height"": 1080, ""Frequency"": 15, ""FieldOfView"": 50, ""MinDistance"": 0.1, ""MaxDistance"": 1000, ""Topic"": ""/simulator/semantic_camera/compressed"" },
+            @"{""type"": ""Segmentation Camera"", ""name"": ""Segmentation Camera"",
+            ""params"": { ""Width"": 1920, ""Height"": 1080, ""Frequency"": 15, ""FieldOfView"": 50, ""MinDistance"": 0.1, ""MaxDistance"": 1000, ""Topic"": ""/simulator/segmentation_camera/compressed"" },
             ""transform"": { ""x"": 0, ""y"": 1.7, ""z"": -0.2, ""pitch"": 0, ""yaw"": 0, ""roll"": 0 }}",
 
             @"{""type"": ""3D Ground Truth"", ""name"": ""3D Ground Truth"",
@@ -118,7 +121,7 @@ namespace Simulator.Sensors
             ""params"": { ""Frequency"": 10, ""Topic"": ""/simulator/ground_truth/2d_detections"" },
             ""transform"": { ""x"": 0, ""y"": 1.7, ""z"": -0.2, ""pitch"": 0, ""yaw"": 0, ""roll"": 0 }}",
 
-            @"{""type"": ""Manual Control"", ""name"": ""Manual Car Control""}"
-        ) + "]";
+            @"{""type"": ""Keyboard Control"", ""name"": ""Keyboard Car Control""}",
+            @"{""type"": ""Wheel Control"", ""name"": ""Wheel Car Control""}") + "]";
     }
 }

@@ -2,9 +2,6 @@ Shader "HDRP/LitTessellation"
 {
     Properties
     {
-        // Versioning of material to help for upgrading
-        [HideInInspector] _HdrpVersion("_HdrpVersion", Float) = 2
-
         // Following set of parameters represent the parameters node inside the MaterialGraph.
         // They are use to fill a SurfaceData. With a MaterialGraph this should not exist.
 
@@ -47,7 +44,7 @@ Shader "HDRP/LitTessellation"
         // These parameters are for pixel displacement
         _HeightPoMAmplitude("Height Amplitude", Float) = 2.0 // In centimeters
 
-        _DetailMap("DetailMap", 2D) = "black" {}
+        _DetailMap("DetailMap", 2D) = "linearGrey" {}
         _DetailAlbedoScale("_DetailAlbedoScale", Range(0.0, 2.0)) = 1
         _DetailNormalScale("_DetailNormalScale", Range(0.0, 2.0)) = 1
         _DetailSmoothnessScale("_DetailSmoothnessScale", Range(0.0, 2.0)) = 1
@@ -81,7 +78,7 @@ Shader "HDRP/LitTessellation"
 
         // Following options are for the GUI inspector and different from the input parameters above
         // These option below will cause different compilation flag.
-        [ToggleUI]  _EnableSpecularOcclusion("Enable specular occlusion", Float) = 0.0
+        [Enum(Off, 0, From Ambient Occlusion, 1, From Bent Normals, 2)]  _SpecularOcclusionMode("Specular Occlusion Mode", Int) = 1
 
         [HDR] _EmissiveColor("EmissiveColor", Color) = (0, 0, 0)
         // Used only to serialize the LDR and HDR emissive color in the material UI,
@@ -122,7 +119,7 @@ Shader "HDRP/LitTessellation"
         _TransparentSortPriority("_TransparentSortPriority", Float) = 0
 
         // Transparency
-        [Enum(None, 0, Box, 1, Sphere, 2)]_RefractionModel("Refraction Model", Int) = 0
+        [Enum(None, 0, Box, 1, Sphere, 2, Thin, 3)]_RefractionModel("Refraction Model", Int) = 0
         [Enum(Proxy, 1, HiZ, 2)]_SSRefractionProjectionModel("Refraction Projection Model", Int) = 0
         _Ior("Index Of Refraction", Range(1.0, 2.5)) = 1.0
         _ThicknessMultiplier("Thickness Multiplier", Float) = 1.0
@@ -133,20 +130,20 @@ Shader "HDRP/LitTessellation"
 
         // Stencil state
         // Forward
-        [HideInInspector] _StencilRef("_StencilRef", Int) = 2 // StencilLightingUsage.RegularLighting
-        [HideInInspector] _StencilWriteMask("_StencilWriteMask", Int) = 3 // StencilMask.Lighting
+        [HideInInspector] _StencilRef("_StencilRef", Int) = 0 // StencilUsage.Clear
+        [HideInInspector] _StencilWriteMask("_StencilWriteMask", Int) = 3 // StencilUsage.RequiresDeferredLighting | StencilUsage.SubsurfaceScattering
         // GBuffer
-        [HideInInspector] _StencilRefGBuffer("_StencilRefGBuffer", Int) = 2 // StencilLightingUsage.RegularLighting
-        [HideInInspector] _StencilWriteMaskGBuffer("_StencilWriteMaskGBuffer", Int) = 3 // StencilMask.Lighting
+        [HideInInspector] _StencilRefGBuffer("_StencilRefGBuffer", Int) = 2 // StencilUsage.RequiresDeferredLighting
+        [HideInInspector] _StencilWriteMaskGBuffer("_StencilWriteMaskGBuffer", Int) = 3 // StencilUsage.RequiresDeferredLighting | StencilUsage.SubsurfaceScattering
         // Depth prepass
         [HideInInspector] _StencilRefDepth("_StencilRefDepth", Int) = 0 // Nothing
-        [HideInInspector] _StencilWriteMaskDepth("_StencilWriteMaskDepth", Int) = 32 // DoesntReceiveSSR
+        [HideInInspector] _StencilWriteMaskDepth("_StencilWriteMaskDepth", Int) = 8 // StencilUsage.TraceReflectionRay
         // Motion vector pass
-        [HideInInspector] _StencilRefMV("_StencilRefMV", Int) = 128 // StencilBitMask.ObjectMotionVectors
-        [HideInInspector] _StencilWriteMaskMV("_StencilWriteMaskMV", Int) = 128 // StencilBitMask.ObjectMotionVectors
+        [HideInInspector] _StencilRefMV("_StencilRefMV", Int) = 32 // StencilUsage.ObjectMotionVector
+        [HideInInspector] _StencilWriteMaskMV("_StencilWriteMaskMV", Int) = 32 // StencilUsage.ObjectMotionVector
         // Distortion vector pass
-        [HideInInspector] _StencilRefDistortionVec("_StencilRefDistortionVec", Int) = 64 // StencilBitMask.DistortionVectors
-        [HideInInspector] _StencilWriteMaskDistortionVec("_StencilWriteMaskDistortionVec", Int) = 64 // StencilBitMask.DistortionVectors
+        [HideInInspector] _StencilRefDistortionVec("_StencilRefDistortionVec", Int) = 2 // StencilUsage.DistortionVectors
+        [HideInInspector] _StencilWriteMaskDistortionVec("_StencilWriteMaskDistortionVec", Int) = 2 // StencilUsage.DistortionVectors
 
         // Blending state
         [HideInInspector] _SurfaceType("__surfacetype", Float) = 0.0
@@ -155,12 +152,15 @@ Shader "HDRP/LitTessellation"
         [HideInInspector] _DstBlend("__dst", Float) = 0.0
         [HideInInspector] _AlphaSrcBlend("__alphaSrc", Float) = 1.0
         [HideInInspector] _AlphaDstBlend("__alphaDst", Float) = 0.0
-        [HideInInspector] _ZWrite("__zw", Float) = 1.0
+        [HideInInspector][ToggleUI] _ZWrite("__zw", Float) = 1.0
+        [HideInInspector][ToggleUI] _TransparentZWrite("_TransparentZWrite", Float) = 0.0
         [HideInInspector] _CullMode("__cullmode", Float) = 2.0
         [HideInInspector] _CullModeForward("__cullmodeForward", Float) = 2.0 // This mode is dedicated to Forward to correctly handle backface then front face rendering thin transparent
+        [Enum(UnityEditor.Rendering.HighDefinition.TransparentCullMode)] _TransparentCullMode("_TransparentCullMode", Int) = 2 // Back culling by default
         [HideInInspector] _ZTestDepthEqualForOpaque("_ZTestDepthEqualForOpaque", Int) = 4 // Less equal
         [HideInInspector] _ZTestModeDistortion("_ZTestModeDistortion", Int) = 8
         [HideInInspector] _ZTestGBuffer("_ZTestGBuffer", Int) = 4
+        [Enum(UnityEngine.Rendering.CompareFunction)] _ZTestTransparent("Transparent ZTest", Int) = 4 // Less equal
 
         [ToggleUI] _EnableFogOnTransparent("Enable Fog", Float) = 1.0
         [ToggleUI] _EnableBlendModePreserveSpecularLighting("Enable Blend Mode Preserve Specular Lighting", Float) = 1.0
@@ -190,8 +190,6 @@ Shader "HDRP/LitTessellation"
         _SpecularAAScreenSpaceVariance("SpecularAAScreenSpaceVariance", Range(0.0, 1.0)) = 0.1
         _SpecularAAThreshold("SpecularAAThreshold", Range(0.0, 1.0)) = 0.2
 
-        [ToggleUI] _EnableMotionVectorForVertexAnimation("EnableMotionVectorForVertexAnimation", Float) = 0.0
-
         _PPDMinSamples("Min sample for POM", Range(1.0, 64.0)) = 5
         _PPDMaxSamples("Max sample for POM", Range(1.0, 64.0)) = 15
         _PPDLodThreshold("Start lod to fade out the POM effect", Range(0.0, 16.0)) = 5
@@ -207,14 +205,6 @@ Shader "HDRP/LitTessellation"
         [Enum(UV0, 0, UV1, 1, UV2, 2, UV3, 3, Planar, 4, Triplanar, 5)] _UVEmissive("UV Set for emissive", Float) = 0
         _TexWorldScaleEmissive("Scale to apply on world coordinate", Float) = 1.0
         [HideInInspector] _UVMappingMaskEmissive("_UVMappingMaskEmissive", Color) = (1, 0, 0, 0)
-
-        // Wind
-        [ToggleUI]  _EnableWind("Enable Wind", Float) = 0.0
-        _InitialBend("Initial Bend", float) = 1.0
-        _Stiffness("Stiffness", float) = 1.0
-        _Drag("Drag", float) = 1.0
-        _ShiverDrag("Shiver Drag", float) = 0.2
-        _ShiverDirectionality("Shiver Directionality", Range(0.0, 1.0)) = 0.5
 
         // Caution: C# code in BaseLitUI.cs call LightmapEmissionFlagsProperty() which assume that there is an existing "_EmissionColor"
         // value that exist to identify if the GI emission need to be enabled.
@@ -239,6 +229,8 @@ Shader "HDRP/LitTessellation"
 
         [ToggleUI] _SupportDecals("Support Decals", Float) = 1.0
         [ToggleUI] _ReceivesSSR("Receives SSR", Float) = 1.0
+        [ToggleUI] _AddPrecomputedVelocity("AddPrecomputedVelocity", Float) = 0.0
+
     }
 
     HLSLINCLUDE
@@ -257,9 +249,8 @@ Shader "HDRP/LitTessellation"
     #pragma shader_feature_local _VERTEX_DISPLACEMENT_LOCK_OBJECT_SCALE
     #pragma shader_feature_local _DISPLACEMENT_LOCK_TILING_SCALE
     #pragma shader_feature_local _PIXEL_DISPLACEMENT_LOCK_OBJECT_SCALE
-    #pragma shader_feature_local _VERTEX_WIND
     #pragma shader_feature_local _TESSELLATION_PHONG
-    #pragma shader_feature_local _ _REFRACTION_PLANE _REFRACTION_SPHERE
+    #pragma shader_feature_local _ _REFRACTION_PLANE _REFRACTION_SPHERE _REFRACTION_THIN
 
     #pragma shader_feature_local _ _EMISSIVE_MAPPING_PLANAR _EMISSIVE_MAPPING_TRIPLANAR
     #pragma shader_feature_local _ _MAPPING_PLANAR _MAPPING_TRIPLANAR
@@ -270,7 +261,16 @@ Shader "HDRP/LitTessellation"
     #pragma shader_feature_local _MASKMAP
     #pragma shader_feature_local _BENTNORMALMAP
     #pragma shader_feature_local _EMISSIVE_COLOR_MAP
+
+    // _ENABLESPECULAROCCLUSION keyword is obsolete but keep here for compatibility. Do not used
+    // _ENABLESPECULAROCCLUSION and _SPECULAR_OCCLUSION_X can't exist at the same time (the new _SPECULAR_OCCLUSION replace it)
+    // When _ENABLESPECULAROCCLUSION is found we define _SPECULAR_OCCLUSION_X so new code to work
     #pragma shader_feature_local _ENABLESPECULAROCCLUSION
+    #pragma shader_feature_local _ _SPECULAR_OCCLUSION_NONE _SPECULAR_OCCLUSION_FROM_BENT_NORMAL_MAP
+    #ifdef _ENABLESPECULAROCCLUSION
+    #define _SPECULAR_OCCLUSION_FROM_BENT_NORMAL_MAP
+    #endif
+
     #pragma shader_feature_local _HEIGHTMAP
     #pragma shader_feature_local _TANGENTMAP
     #pragma shader_feature_local _ANISOTROPYMAP
@@ -283,6 +283,7 @@ Shader "HDRP/LitTessellation"
 
     #pragma shader_feature_local _DISABLE_DECALS
     #pragma shader_feature_local _DISABLE_SSR
+    #pragma shader_feature_local _ADD_PRECOMPUTED_VELOCITY
     #pragma shader_feature_local _ENABLE_GEOMETRIC_SPECULAR_AA
 
     // Keyword for transparent
@@ -326,7 +327,6 @@ Shader "HDRP/LitTessellation"
     //-------------------------------------------------------------------------------------
 
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
-    #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Wind.hlsl"
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/GeometricTools.hlsl"
     #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Tessellation.hlsl"
     #include "Packages/com.unity.render-pipelines.high-definition/Runtime/ShaderLibrary/ShaderVariables.hlsl"
@@ -378,6 +378,8 @@ Shader "HDRP/LitTessellation"
             #pragma fragment Frag
             #pragma hull Hull
             #pragma domain Domain
+
+            #pragma editor_sync_compilation
 
             ENDHLSL
         }
@@ -659,9 +661,9 @@ Shader "HDRP/LitTessellation"
             #pragma multi_compile _ SHADOWS_SHADOWMASK
             // Setup DECALS_OFF so the shader stripper can remove variants
             #pragma multi_compile DECALS_OFF DECALS_3RT DECALS_4RT
-            
+
             // Supported shadow modes per light type
-            #pragma multi_compile SHADOW_LOW SHADOW_MEDIUM SHADOW_HIGH SHADOW_VERY_HIGH
+            #pragma multi_compile SHADOW_LOW SHADOW_MEDIUM SHADOW_HIGH
 
             #define USE_CLUSTERED_LIGHTLIST // There is not FPTL lighting when using transparent
 
@@ -725,9 +727,9 @@ Shader "HDRP/LitTessellation"
             #pragma multi_compile _ SHADOWS_SHADOWMASK
             // Setup DECALS_OFF so the shader stripper can remove variants
             #pragma multi_compile DECALS_OFF DECALS_3RT DECALS_4RT
-            
+
             // Supported shadow modes per light type
-            #pragma multi_compile SHADOW_LOW SHADOW_MEDIUM SHADOW_HIGH SHADOW_VERY_HIGH
+            #pragma multi_compile SHADOW_LOW SHADOW_MEDIUM SHADOW_HIGH
 
             #pragma multi_compile USE_FPTL_LIGHTLIST USE_CLUSTERED_LIGHTLIST
 
@@ -795,5 +797,5 @@ Shader "HDRP/LitTessellation"
         }
     }
 
-    CustomEditor "Experimental.Rendering.HDPipeline.LitGUI"
+    CustomEditor "Rendering.HighDefinition.LitGUI"
 }

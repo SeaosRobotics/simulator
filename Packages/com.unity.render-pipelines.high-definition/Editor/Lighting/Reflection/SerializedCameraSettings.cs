@@ -1,7 +1,7 @@
 using UnityEditor.Rendering;
-using UnityEngine.Experimental.Rendering.HDPipeline;
+using UnityEngine.Rendering.HighDefinition;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline
+namespace UnityEditor.Rendering.HighDefinition
 {
     internal class SerializedCameraSettingsOverride
     {
@@ -57,8 +57,8 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             volumesAnchorOverride = root.FindPropertyRelative("volumes.anchorOverride");
             frustumMode = root.FindPropertyRelative("frustum.mode");
             frustumAspect = root.FindPropertyRelative("frustum.aspect");
-            frustumFarClipPlane = root.FindPropertyRelative("frustum.farClipPlane");
-            frustumNearClipPlane = root.FindPropertyRelative("frustum.nearClipPlane");
+            frustumFarClipPlane = root.FindPropertyRelative("frustum.farClipPlaneRaw");
+            frustumNearClipPlane = root.FindPropertyRelative("frustum.nearClipPlaneRaw");
             frustumFieldOfView = root.FindPropertyRelative("frustum.fieldOfView");
             frustumProjectionMatrix = root.FindPropertyRelative("frustum.projectionMatrix");
             cullingUseOcclusionCulling = root.FindPropertyRelative("culling.useOcclusionCulling");

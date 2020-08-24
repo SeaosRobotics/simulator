@@ -48,6 +48,7 @@ namespace Simulator.Web.Modules
         public string Status;
         public string Sensors;
         public string BridgeType;
+        public string Error;
 
         public static VehicleResponse Create(VehicleModel vehicle)
         {
@@ -60,6 +61,7 @@ namespace Simulator.Web.Modules
                 PreviewUrl = vehicle.PreviewUrl,
                 Status = vehicle.Status,
                 Sensors = vehicle.Sensors,
+                Error = vehicle.Error,
             };
         }
     }
@@ -75,7 +77,7 @@ namespace Simulator.Web.Modules
                 .NotEmpty().WithMessage("You must specify a non-empty URL")
                 .Must(Validation.IsValidUrl).WithMessage("You must specify a valid URL")
                 .Must(Validation.BeValidFilePath).WithMessage("You must specify a valid URL")
-                .Must(Validation.BeValidAssetBundle).WithMessage("You must specify a valid AssetBundle File");
+                .Must(Validation.BeValidAssetBundle).WithMessage("You must specify a valid AssetBundle");
 
             RuleFor(req => req.bridgeType).Must(Validation.BeValidBridgeType).WithMessage("You must select an existing bridge type or choose no bridge.");
             RuleFor(req => req.sensors).Must(Validation.BeValidSensorConfig).WithMessage("You must provide a valid sensor configuration.");
@@ -95,12 +97,40 @@ namespace Simulator.Web.Modules
                 Debug.Log($"Listing vehicles");
                 try
                 {
-                    int page = Request.Query["page"];
+                    string filter = Request.Query["filter"];
+                    int offset = Request.Query["offset"];
                     // TODO: Items per page should be read from personal user settings.
                     //       This value should be independent for each module: Vehicles, vehicles and simulation.
                     //       But for now 5 is just an arbitrary value to ensure that we don't try and Page a count of 0
                     int count = Request.Query["count"] > 0 ? Request.Query["count"] : Config.DefaultPageSize;
-                    return service.List(page, count, this.Context.CurrentUser.Identity.Name).Select(VehicleResponse.Create).ToArray();
+                    return service.List(filter, offset, count, this.Context.CurrentUser.Identity.Name)
+                        .Select(vehicle =>
+                        {
+                            if (vehicle.Status != "Downloading")
+                            {
+                                bool valid;
+                                try
+                                {
+                                    valid = Validation.BeValidAssetBundle(vehicle.LocalPath);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogException(ex);
+                                    valid = false;
+                                }
+
+                                if (!valid)
+                                {
+                                    vehicle.Status = "Invalid";
+                                    vehicle.Error = "Missing or wrong Vehicle AssetBundle. Please check content website for updated bundle or rebuild the bundle.";
+                                    // TODO: this should be more precise what exactly is wrong (file missing, wrong BundleFormat version, not a zip file, etc...)
+                                }
+                            }
+
+                            return vehicle;
+                        })
+                        .Select(VehicleResponse.Create)
+                        .ToArray();
                 }
                 catch (Exception ex)
                 {
@@ -177,12 +207,24 @@ namespace Simulator.Web.Modules
                             uri,
                             vehicle.LocalPath,
                             progress => notificationService.Send("VehicleDownload", new { vehicle.Id, progress }, vehicle.Owner),
-                            success =>
+                            (success, ex) =>
                             {
-                                string status = success && Validation.BeValidAssetBundle(vehicle.LocalPath) ? "Valid" : "Invalid";
+                                bool passesValidation = success && Validation.BeValidAssetBundle(vehicle.LocalPath);
+                                string status = passesValidation ? "Valid" : "Invalid";
+
                                 service.SetStatusForPath(status, vehicle.LocalPath);
                                 service.GetAllMatchingUrl(vehicle.Url).ForEach(v =>
                                 {
+                                    if (!passesValidation)
+                                    {
+                                        v.Error = "You must specify a valid AssetBundle";
+                                    }
+
+                                    if (ex != null)
+                                    {
+                                        v.Error = ex.Message;
+                                    }
+
                                     notificationService.Send("VehicleDownloadComplete", v, v.Owner);
                                     SIM.LogWeb(SIM.Web.VehicleDownloadFinish, vehicle.Name);
                                 });
@@ -242,14 +284,26 @@ namespace Simulator.Web.Modules
                                 uri,
                                 vehicle.LocalPath,
                                 progress => notificationService.Send("VehicleDownload", new { vehicle.Id, progress }, vehicle.Owner),
-                                success =>
+                                (success, ex) =>
                                 {
-                                    string status = success && Validation.BeValidAssetBundle(vehicle.LocalPath) ? "Valid" : "Invalid";
+                                    bool passesValidation = success && Validation.BeValidAssetBundle(vehicle.LocalPath);
+                                    string status = passesValidation ? "Valid" : "Invalid";
                                     service.SetStatusForPath(status, vehicle.LocalPath);
                                     service.GetAllMatchingUrl(vehicle.Url).ForEach(v =>
                                     {
+                                        if (!passesValidation)
+                                        {
+                                            v.Error = "You must specify a valid AssetBundle";
+                                        }
+
                                         // TODO: We have a bug about flickering vehicles, is it because of that?
+                                        if (ex != null)
+                                        {
+                                            v.Error = ex.Message;
+                                        }
+
                                         notificationService.Send("VehicleDownloadComplete", v, v.Owner);
+
                                         SIM.LogWeb(SIM.Web.VehicleDownloadFinish, vehicle.Name);
                                     });
                                 }
@@ -393,12 +447,18 @@ namespace Simulator.Web.Modules
                                     Debug.Log($"Vehicle Download at {progress}%");
                                     notificationService.Send("VehicleDownload", new { vehicle.Id, progress }, vehicle.Owner);
                                 },
-                                success =>
+                                (success, ex) =>
                                 {
                                     var updatedModel = service.Get(id, vehicle.Owner);
                                     updatedModel.Status = success && Validation.BeValidAssetBundle(updatedModel.LocalPath) ? "Valid" : "Invalid";
+                                    if (ex != null)
+                                    {
+                                        updatedModel.Error = ex.Message;
+                                    }
+
                                     service.Update(updatedModel);
                                     notificationService.Send("VehicleDownloadComplete", updatedModel, updatedModel.Owner);
+
                                     SIM.LogWeb(SIM.Web.VehicleDownloadFinish, vehicle.Name);
                                 }
                             );

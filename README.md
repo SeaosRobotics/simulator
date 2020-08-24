@@ -24,7 +24,6 @@
 Check out our [blog](https://www.lgsvlsimulator.com/blog/) and subscribe to our [mailing list](http://eepurl.com/gpuhkb) to get the latest updates.
 
 
-
 ## Introduction
 
 LG Electronics America R&D Center has developed an HDRP Unity-based multi-robot simulator for autonomous vehicle developers. 
@@ -40,7 +39,7 @@ We hope to build a collaborative community among robotics and autonomous vehicle
 For Chinese-speaking users, you can also view our latest videos [here](https://space.bilibili.com/412295691) and download our simulator releases [here](https://pan.baidu.com/s/1M33ysJYZfi4vya41gmB0rw) (code: 6k91).
 对于中国的用户，您也可在[哔哩哔哩](https://space.bilibili.com/412295691)上观看我们最新发布的视频，从[百度网盘](https://pan.baidu.com/s/1M33ysJYZfi4vya41gmB0rw)(提取码: 6k91)上下载使用我们的仿真器。
 
-[![](Docs/docs/images/full_size_images/readme-frontal.png)](Docs/docs/images/readme-frontal.png)
+[![](Docs/docs/images/readme-frontal.png)](Docs/docs/images/full_size_images/readme-frontal.png)
 
 
 ## Getting Started
@@ -68,9 +67,17 @@ Currently, running the simulator in Windows yields better performance than runni
 
 ### Building and running from source
 
-**NOTE**: to clone repository faster, clone only single branch:
+**NOTE**: to clone repository faster, clone only single branch.
+
+To get latest code from master branch:
 
     git clone --single-branch https://github.com/lgsvl/simulator.git
+
+Alternatively, you can get source code of specific release. Here is an example how to checkout by release tag `2020.03`
+
+    git clone https://github.com/lgsvl/simulator.git
+    cd simulator
+    git checkout 2020.03
 
 Check out our instructions for getting started with building from source [here](Docs/docs/build-instructions.md).
 

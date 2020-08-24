@@ -14,6 +14,7 @@ using Simulator.Map;
 using OsmSharp;
 using OsmSharp.Streams;
 using OsmSharp.Tags;
+using Utility = Simulator.Utilities.Utility;
 
 namespace Simulator.Editor
 {
@@ -22,22 +23,12 @@ namespace Simulator.Editor
         private MapManagerData MapAnnotationData;
         MapOrigin MapOrigin;
         List<OsmGeo> map = new List<OsmGeo>();
+        Dictionary<int, long> LineId2StartNodeId = new Dictionary<int, long>();
+        Dictionary<int, long> LineId2EndNodeId = new Dictionary<int, long>();
+        Dictionary<long, Node> Id2Node = new Dictionary<long, Node>();
 
         public Lanelet2MapExporter()
         {
-        }
-
-        public void ExportLanelet2Map(string filePath)
-        {
-            if (Calculate())
-            {
-                Export(filePath);
-                Debug.Log("Successfully generated and exported Lanelet2 Map!");
-            }
-            else
-            {
-                Debug.LogError("Failed to export Lanelet2 Map!");
-            }
         }
 
         bool Calculate()
@@ -80,30 +71,18 @@ namespace Simulator.Editor
                 return false;
             }
 
-            // Link before and after segment for each line segment
-            if (!AlignPointsInLines(lineSegments))
-            {
-                return false;
-            }
-
             // Link points in each crosswalk
             AlignPointsInCrossWalk(crossWalkList);
 
             // Link Points in each parking area
             AlignPointsInParkingSpace(parkingSpaceList);
 
-
             // process lanes - create lanelet from lane and left/right boundary
             if (ExistsLaneWithBoundaries(laneSegments))
             {
-                foreach (var laneSegment in laneSegments)
-                {
-                    Relation lanelet = CreateLaneletFromLane(laneSegment);
-                    if (lanelet != null)
-                    {
-                        map.Add(lanelet);
-                    }
-                }
+                // Link before and after segment for each line segment based on lane's predecessor/successor
+                AlignPointsInLines(laneSegments);
+                CreateLaneletsFromLanes(laneSegments);
             }
             else // If there are no lanes with left/right boundaries
             {
@@ -114,19 +93,8 @@ namespace Simulator.Editor
 
                 var fakeBoundaryLineSegments = new HashSet<MapLine>(fakeBoundaryLineList);
 
-                if (!AlignPointsInLines(fakeBoundaryLineSegments))
-                {
-                    return false;
-                }
-
-                foreach (var laneSegment in laneSegments)
-                {
-                    Relation lanelet = CreateLaneletFromLane(laneSegment);
-                    if (lanelet != null)
-                    {
-                        map.Add(lanelet);
-                    }
-                }
+                AlignPointsInLines(laneSegments);
+                CreateLaneletsFromLanes(laneSegments);
             }
 
             // process stop lines - create stop lines
@@ -167,6 +135,12 @@ namespace Simulator.Editor
 
                     if (lineSegment.isStopSign)
                     {
+                        if (!stopLineLanes.ContainsKey(lineSegment))
+                        {
+                            Debug.LogError($"Stop line for {lineSegment.stopSign.gameObject.name} sign is not associated with any lane (lane probably does not intersect stop line in last segment)", lineSegment.stopSign.gameObject);
+                            throw new Exception("Export failed");
+                        }
+
                         // create way for stop sign
                         Way wayStopSign = CreateWayFromStopSign(lineSegment.stopSign);
                         Relation relationRegulatoryElement = CreateRegulatoryElementFromStopLineStopSign(wayStopLine, wayStopSign);
@@ -195,6 +169,18 @@ namespace Simulator.Editor
             }
 
             return true;
+        }
+
+        private void CreateLaneletsFromLanes(HashSet<MapLane> laneSegments)
+        {
+            foreach (var laneSegment in laneSegments)
+            {
+                Relation lanelet = CreateLaneletFromLane(laneSegment);
+                if (lanelet != null)
+                {
+                    map.Add(lanelet);
+                }
+            }
         }
 
         public long GetNewId()
@@ -298,20 +284,55 @@ namespace Simulator.Editor
             return 0;
         }
 
-        public Way CreateWayFromLine(MapLine line, TagsCollection tags)
+        public Way CreateWayFromLine(MapLine line, TagsCollection tags, bool isBasedOnLane = false)
         {
+            var startIdx = 0;
+            var endIdx = line.mapWorldPositions.Count;
             List<Node> nodes = new List<Node>();
-            // create nodes
-            for (int p = 0; p < line.mapWorldPositions.Count; p++)
-            {
-                Vector3 pos = line.mapWorldPositions[p];
-                var location = MapOrigin.GetGpsLocation(pos);
+            Node firstNode, lastNode;
+            var lineId = line.GetInstanceID();
 
-                Node node = CreateNodeFromPoint(pos);
+            if (isBasedOnLane)
+            {
+                startIdx = 1;
+                endIdx = line.mapWorldPositions.Count - 1;
+                if (LineId2StartNodeId.ContainsKey(lineId))
+                {
+                    var nodeId = LineId2StartNodeId[lineId];
+                    firstNode = Id2Node[nodeId];
+                }
+                else firstNode = CreateNodeByIndex(line, 0);
+                nodes.Add(firstNode);
+            }
+
+            // create nodes
+            for (int p = startIdx; p < endIdx; p++)
+            {
+                Node node = CreateNodeByIndex(line, p);
                 nodes.Add(node);
             }
 
+            if (isBasedOnLane)
+            {
+                if (LineId2EndNodeId.ContainsKey(lineId))
+                {
+                    var nodeId = LineId2EndNodeId[lineId];
+                    lastNode = Id2Node[nodeId];
+                }
+                else lastNode = CreateNodeByIndex(line, line.mapWorldPositions.Count - 1);
+                nodes.Add(lastNode);
+            } 
+
             return CreateWayFromNodes(nodes, tags);
+        }
+
+        private Node CreateNodeByIndex(MapLine line, int p)
+        {
+            Vector3 pos = line.mapWorldPositions[p];
+            var location = MapOrigin.GetGpsLocation(pos);
+            Node node = CreateNodeFromPoint(pos);
+            Id2Node[node.Id.Value] = node;
+            return node;
         }
 
         public Node CreateNodeFromPoint(Vector3 point)
@@ -499,10 +520,16 @@ namespace Simulator.Editor
 
         public Relation CreateLaneletFromLane(MapLane lane)
         {
+            var leftLine = lane.leftLineBoundry;
+            var rightLine = lane.rightLineBoundry;
+            var isSameDirectionLeft = isSameDirection(lane, leftLine);
+            var isSameDirectionRight = isSameDirection(lane, rightLine);
+
             // check if a lane has both left and right boundary
-            if (lane.leftLineBoundry != null && lane.rightLineBoundry != null)
+            if (leftLine != null && rightLine != null)
             {
-                TagsCollection way_tags = new TagsCollection();
+                TagsCollection left_way_tags = new TagsCollection();
+                TagsCollection right_way_tags = new TagsCollection();
                 TagsCollection lanelet_tags = new TagsCollection(
                     new Tag("location", "urban"),
                     new Tag("subtype", "road"),
@@ -511,9 +538,45 @@ namespace Simulator.Editor
                 );
 
                 // create node and way from boundary
-                Way leftWay = CreateWayFromLine(lane.leftLineBoundry, way_tags);
-                Way rightWay = CreateWayFromLine(lane.rightLineBoundry, way_tags);
+                Way leftWay = CreateWayFromLine(leftLine, left_way_tags, true);
+                Way rightWay = CreateWayFromLine(rightLine, right_way_tags, true);
+                
+                UpdateLineStartEnd2NodeId(leftLine, leftWay);
+                UpdateLineStartEnd2NodeId(rightLine, rightWay);
 
+                var leftWayStartNodeId = leftWay.Nodes.First();
+                var leftWayEndNodeId = leftWay.Nodes.Last();
+
+                var rightWayStartNodeId = rightWay.Nodes.First();
+                var rightWayEndNodeId = rightWay.Nodes.Last();
+
+                var beforeLanes = lane.befores;
+                var leftStartNodeBasedOnLane = isSameDirectionLeft ? leftWayStartNodeId : leftWayEndNodeId;
+                var rightStartNodeBasedOnLane = isSameDirectionRight ? rightWayStartNodeId : rightWayEndNodeId;
+
+                foreach (var beforeLane in beforeLanes)
+                {
+                    var beforeLaneLeftLine = beforeLane.leftLineBoundry;
+                    UpdateBeforeLane(leftStartNodeBasedOnLane, beforeLane, beforeLaneLeftLine);
+
+                    var beforeLaneRightLine = beforeLane.rightLineBoundry;
+                    UpdateBeforeLane(rightStartNodeBasedOnLane, beforeLane, beforeLaneRightLine);
+                }
+
+                var afterLanes = lane.afters;
+                var leftEndNodeBasedOnLane = isSameDirectionLeft ? leftWayEndNodeId : leftWayStartNodeId;
+                var rightEndNodeBasedOnLane = isSameDirectionRight ? rightWayEndNodeId : rightWayStartNodeId;
+                foreach (var afterLane in afterLanes)
+                {
+                    var afterLaneLeftLine = afterLane.leftLineBoundry;
+                    UpdateAfterLane(leftEndNodeBasedOnLane, afterLane, afterLaneLeftLine);
+
+                    var afterLaneRightLine = afterLane.rightLineBoundry;
+                    UpdateAfterLane(rightEndNodeBasedOnLane, afterLane, afterLaneRightLine);
+                }
+
+
+                AddBoundaryTagToWay(lane, leftWay, rightWay);
                 // create lanelet from left/right way
                 if (lane.laneTurnType == MapLane.LaneTurnType.NO_TURN)
                 {
@@ -546,6 +609,36 @@ namespace Simulator.Editor
             {
                 return null;
             }
+        }
+
+        private void UpdateBeforeLane(long startNodeBasedOnLane, MapLane beforeLane, MapLine beforeLaneLine)
+        {
+            if (isSameDirection(beforeLane, beforeLaneLine))
+            {
+                LineId2EndNodeId[beforeLaneLine.GetInstanceID()] = startNodeBasedOnLane;
+            }
+            else
+            {
+                LineId2StartNodeId[beforeLaneLine.GetInstanceID()] = startNodeBasedOnLane;
+            }
+        }
+
+        private void UpdateAfterLane(long EndNodeBasedOnLane, MapLane afterLane, MapLine afterLaneLine)
+        {
+            if (isSameDirection(afterLane, afterLaneLine))
+            {
+                LineId2StartNodeId[afterLaneLine.GetInstanceID()] = EndNodeBasedOnLane;
+            }
+            else
+            {
+                LineId2EndNodeId[afterLaneLine.GetInstanceID()] = EndNodeBasedOnLane;
+            }
+        }
+        void UpdateLineStartEnd2NodeId(MapLine line, Way way)
+        {
+            var lineId = line.GetInstanceID();
+            LineId2StartNodeId[lineId] = way.Nodes.First();
+            LineId2EndNodeId[lineId] = way.Nodes.Last();
         }
 
         public Way CreateWayStopLineFromLine(MapLine line)
@@ -583,7 +676,7 @@ namespace Simulator.Editor
 
             var tags = new TagsCollection(
                 new Tag("height", height.ToString()),
-                new Tag("subtype", "stop_sign"),
+                new Tag("subtype", "usR1-1"),
                 new Tag("type", "traffic_sign")
             );
 
@@ -601,7 +694,7 @@ namespace Simulator.Editor
             };
 
             TagsCollection tags = new TagsCollection(
-                new Tag("subtype", "stop_sign"),
+                new Tag("subtype", "traffic_sign"),
                 new Tag("type", "regulatory_element")
             );
 
@@ -637,6 +730,13 @@ namespace Simulator.Editor
                 wayRight = CreateWayFromNodes(new List<Node>() { n1, n2 });
             }
 
+            wayLeft.Tags.Add(
+                new Tag("type", "pedestrian_marking")
+            );
+            wayRight.Tags.Add(
+                new Tag("type", "pedestrian_marking")
+            );
+
             // create lanelet
             var tags = new TagsCollection(
                 new Tag("subtype", "crosswalk"),
@@ -669,6 +769,11 @@ namespace Simulator.Editor
             Way way2 = CreateWayFromNodes(new List<Node>() { n2, n3 });
             Way way3 = CreateWayFromNodes(new List<Node>() { n3, n0 });
 
+            AddSolidSubtype(way1);
+            AddSolidSubtype(way3);
+            AddVirtualType(way0);
+            AddVirtualType(way2);
+
             // create multipolygon
             var tags = new TagsCollection(
                 new Tag("location", "urban"),
@@ -685,6 +790,25 @@ namespace Simulator.Editor
             };
 
             return CreateRelationFromMembers(members, tags);
+        }
+
+        void AddSolidSubtype(Way way)
+        {
+            if (WayExists(way) != 0) return;
+            way.Tags.Add(
+                new Tag("type", "line_thin")
+            );
+            way.Tags.Add(
+                new Tag("subtype", "solid")
+            );
+        }
+
+        void AddVirtualType(Way way)
+        {
+            if (WayExists(way) != 0) return;
+            way.Tags.Add(
+                new Tag("type", "virtual")
+            );
         }
 
         public bool IsSameLeftRight(RelationMember[] members1, RelationMember[] members2)
@@ -850,8 +974,6 @@ namespace Simulator.Editor
             // Check the directions of two boundry lines
             //    if they are not same, reverse one and get a temp centerline. Compare centerline with left line, determine direction of the centerlane
             //    if they are same, compute centerline.
-            var FirstPoint = lanePoints[0];
-
             float resolution = (float)pitch;
             List<Vector3> boundaryLinePoints = new List<Vector3>();
 
@@ -904,7 +1026,7 @@ namespace Simulator.Editor
             return boundaryLinePoints;
         }
 
-        static float RangedLength(List<Vector3> points)
+        public static float RangedLength(List<Vector3> points)
         {
             float len = 0;
 
@@ -920,6 +1042,9 @@ namespace Simulator.Editor
         {
             foreach (var lane in lanes)
             {
+                lane.befores.Clear(); // should clear since befores/afters are serialized
+                lane.afters.Clear();
+
                 // Each segment must have at least 2 waypoints for calculation, otherwise exit
                 while (lane.mapLocalPositions.Count < 2)
                 {
@@ -973,65 +1098,226 @@ namespace Simulator.Editor
             return true;
         }
 
-        public bool AlignPointsInLines(HashSet<MapLine> lines)
+        // Connect all lines by adjusting starting/ending points
+        public void AlignPointsInLines(HashSet<MapLane> allLanes)
         {
-            foreach (var line in lines)
+            var visitedLaneIdsEnd = new HashSet<int>(); // lanes whose end point has been visited
+            var visitedLaneIdsStart = new HashSet<int>(); // lanes whose start point has been visited
+            foreach (var mapLane in allLanes)
             {
-                // Each segment must have at least 2 waypoints for calculation, otherwise exit
-                while (line.mapLocalPositions.Count < 2)
+                // Handle lane start connecting point
+                if (!visitedLaneIdsStart.Contains(mapLane.GetInstanceID()))
+                    AlignLines(visitedLaneIdsEnd, visitedLaneIdsStart, mapLane, true);
+
+                // Handle lane end connecting point
+                if (!visitedLaneIdsEnd.Contains(mapLane.GetInstanceID()))
+                    AlignLines(visitedLaneIdsEnd, visitedLaneIdsStart, mapLane, false);
+            }
+        }
+
+        void AlignLines(HashSet<int> visitedLaneIdsEnd, HashSet<int> visitedLaneIdsStart, 
+            MapLane mapLane, bool isStart)
+        {
+            var allConnectedLanes2InOut = new Dictionary<MapLane, InOut>();
+            if (isStart)
+            {
+                allConnectedLanes2InOut[mapLane] = InOut.Out;
+                AddInOutToDictionary(mapLane.befores, allConnectedLanes2InOut, InOut.In);
+                foreach (var beforeLane in mapLane.befores) AddInOutToDictionary(beforeLane.afters, allConnectedLanes2InOut, InOut.Out);
+            }
+            else
+            {
+                allConnectedLanes2InOut[mapLane] = InOut.In;
+                AddInOutToDictionary(mapLane.afters, allConnectedLanes2InOut, InOut.Out);
+                foreach (var afterLane in mapLane.afters) AddInOutToDictionary(afterLane.befores, allConnectedLanes2InOut, InOut.In);
+            }
+
+            if (allConnectedLanes2InOut.Count > 1)
+            {
+                var boundaryLine2InOut = GetBoundaryLine2InOut(allConnectedLanes2InOut);
+                List<Vector3> leftMergingPoints, rightMergingPoints;
+                UpdateMergingPoints(allConnectedLanes2InOut, boundaryLine2InOut, out leftMergingPoints, out rightMergingPoints);
+
+                var leftEndPoint = Lanelet2MapImporter.GetAverage(leftMergingPoints);
+                var rightEndPoint = Lanelet2MapImporter.GetAverage(rightMergingPoints);
+                SetEndPoints(allConnectedLanes2InOut, boundaryLine2InOut, leftEndPoint, rightEndPoint);
+            }
+
+            UpdateVisitedSets(allConnectedLanes2InOut, visitedLaneIdsStart, visitedLaneIdsEnd);
+        }
+
+        private void SetEndPoints(Dictionary<MapLane, InOut> allConnectedLanes2InOut, Dictionary<MapLine, InOut> boundaryLine2InOut, Vector3 leftEndPoint, Vector3 rightEndPoint)
+        {
+            foreach (var entry in allConnectedLanes2InOut)
+            {
+                var lane = entry.Key;
+                var leftLine = lane.leftLineBoundry;
+                var rightLine = lane.rightLineBoundry;
+                SetEndPoint(leftLine, leftEndPoint, boundaryLine2InOut[leftLine]);
+                SetEndPoint(rightLine, rightEndPoint, boundaryLine2InOut[rightLine]);
+            }
+        }
+
+        private void UpdateMergingPoints(Dictionary<MapLane, InOut> allConnectedLanes2InOut, Dictionary<MapLine, InOut> boundaryLine2InOut, out List<Vector3> leftMergingPoints, out List<Vector3> rightMergingPoints)
+        {
+            leftMergingPoints = new List<Vector3>();
+            rightMergingPoints = new List<Vector3>();
+            foreach (var entry in allConnectedLanes2InOut)
+            {
+                var lane = entry.Key;
+                var leftLine = lane.leftLineBoundry;
+                var rightLine = lane.rightLineBoundry;
+                var leftPoint = GetEndPoint(boundaryLine2InOut[leftLine], leftLine.mapWorldPositions);
+                var rightPoint = GetEndPoint(boundaryLine2InOut[rightLine], rightLine.mapWorldPositions);
+                leftMergingPoints.Add(leftPoint);
+                rightMergingPoints.Add(rightPoint);
+            }
+        }
+
+        void SetEndPoint(MapLine line, Vector3 endPoint, InOut inOut)
+        {
+            RemoveOverlappingEndPoints(line, inOut);
+            var index = GetEndPointIndex(inOut, line.mapWorldPositions);
+            line.mapWorldPositions[index] = endPoint;
+            line.mapLocalPositions[index] = line.transform.InverseTransformPoint(endPoint);
+        }
+
+        void RemoveOverlappingEndPoints(MapLine line, InOut inOut)
+        {
+            var positions = line.mapWorldPositions;
+            Vector3 p1 = positions.First(), p2 = positions[1];
+            var changed = false;
+            var distThreshold = 0.5;
+            if ((p2 - p1).magnitude < distThreshold)
+            {
+                Debug.LogWarning($"Line {line.name} {line.GetInstanceID()} first two points are overlapping, remove second one.");
+                CheckLinePositionsSize(line);
+                if (positions.Count > 2 && !isSameDirection3Points(p1, p2, positions[2]))
                 {
-                    Debug.LogError("Some segment has less than 2 waypoints. Cancelling map generation.");
-                    UnityEditor.Selection.activeGameObject = line.gameObject;
-                    return false;
+                    positions.RemoveAt(1);
+                    changed = true;
                 }
-
-                // Link lanes
-                var firstPt = line.transform.TransformPoint(line.mapLocalPositions[0]);
-                var lastPt = line.transform.TransformPoint(line.mapLocalPositions[line.mapLocalPositions.Count - 1]);
-
-                foreach (var lineCmp in lines)
+            }
+            Vector3 p3 = positions[positions.Count - 2], p4 = positions.Last();
+            if ((p3 - p4).magnitude < distThreshold)
+            {
+                Debug.LogWarning($"Line {line.name} {line.GetInstanceID()} last two points are overlapping, remove the one before last one.");
+                CheckLinePositionsSize(line);
+                if (positions.Count > 2 && !isSameDirection3Points(positions[positions.Count - 3], p3, p4))
                 {
-                    if (line == lineCmp)
-                    {
-                        continue;
-                    }
-
-                    var firstPt_cmp = lineCmp.transform.TransformPoint(lineCmp.mapLocalPositions[0]);
-                    var lastPt_cmp = lineCmp.transform.TransformPoint(lineCmp.mapLocalPositions[lineCmp.mapLocalPositions.Count - 1]);
-
-                    if ((firstPt - lastPt_cmp).magnitude < MapAnnotationTool.PROXIMITY / MapAnnotationTool.EXPORT_SCALE_FACTOR)
-                    {
-                        lineCmp.mapLocalPositions[lineCmp.mapLocalPositions.Count - 1] = lineCmp.transform.InverseTransformPoint(firstPt);
-                        lineCmp.mapWorldPositions[lineCmp.mapWorldPositions.Count - 1] = firstPt;
-                        line.befores.Add(lineCmp);
-                    }
-
-                    if ((lastPt - firstPt_cmp).magnitude < MapAnnotationTool.PROXIMITY / MapAnnotationTool.EXPORT_SCALE_FACTOR)
-                    {
-                        lineCmp.mapLocalPositions[0] = lineCmp.transform.InverseTransformPoint(lastPt);
-                        lineCmp.mapWorldPositions[0] = lastPt;
-                        line.afters.Add(lineCmp);
-                    }
+                    positions.RemoveAt(positions.Count - 2);
+                    changed = true;
                 }
             }
 
-            foreach (var line in lines)
+            if (changed)
             {
-                foreach (var lineCmp in lines)
-                {
-                    if (line == lineCmp)
-                    {
-                        continue;
-                    }
+                ApolloMapImporter.UpdateLocalPositions(line);
+            }
+        }
 
-                    if (lineCmp.mapWorldPositions[0] == line.mapWorldPositions[line.mapWorldPositions.Count - 1] && lineCmp.mapWorldPositions[lineCmp.mapWorldPositions.Count - 1] == line.mapWorldPositions[0])
-                    {
-                        line.mapWorldPositions = lineCmp.mapWorldPositions;
-                    }
-                }
+        bool isSameDirection3Points(Vector3 p1, Vector3 p2, Vector3 p3)
+        {
+            var vec12 = p2 - p1;
+            var vec23 = p3 - p2;
+            return Vector3.Dot(vec12, vec23) >= 0;
+        }
+
+        void CheckLinePositionsSize(MapLine line)
+        {
+            if (line.mapWorldPositions.Count == 2)
+            {
+                var msg = $"Line {line.name} {line.GetInstanceID()} only has two points and overlapping with each other, please check.";
+                UnityEditor.Selection.activeGameObject = line.gameObject;
+                throw new Exception(msg);
+            }
+        }
+
+        Vector3 GetEndPoint(InOut inOut, List<Vector3> positions)
+        {
+            return inOut == InOut.In ? positions.Last() : positions.First();
+        }
+
+        int GetEndPointIndex(InOut inOut, List<Vector3> positions)
+        {
+            return inOut == InOut.In ? positions.Count - 1 : 0;
+        }
+
+        void UpdateVisitedSets(Dictionary<MapLane, InOut> allConnectedLanes2InOut, 
+            HashSet<int> visitedLaneInstanceIdsStart, HashSet<int> visitedLaneInstanceIdsEnd)
+        {
+            foreach (var entry in allConnectedLanes2InOut)
+            {
+                var lane = entry.Key;
+                var inOut = entry.Value;
+                if (inOut == InOut.In) visitedLaneInstanceIdsEnd.Add(lane.GetInstanceID());
+                else visitedLaneInstanceIdsStart.Add(lane.GetInstanceID());
+            }
+        }
+
+        Dictionary<MapLine, InOut> GetBoundaryLine2InOut(Dictionary<MapLane, InOut> lane2InOut)
+        {
+            var boundaryLine2InOut = new Dictionary<MapLine, InOut>();
+            foreach (var entry in lane2InOut)
+            {
+                var lane = entry.Key;
+                var laneInOut = entry.Value;
+                var leftBoundaryLine = lane.leftLineBoundry;
+                var rightBoundaryLine = lane.rightLineBoundry;
+                AddToLine2InOut(boundaryLine2InOut, leftBoundaryLine, lane, laneInOut);
+                AddToLine2InOut(boundaryLine2InOut, rightBoundaryLine, lane, laneInOut);
             }
 
-            return true;
+            return boundaryLine2InOut;
+        }
+
+        void AddToLine2InOut(Dictionary<MapLine, InOut> boundaryLine2InOut, MapLine mapLine, MapLane mapLane, InOut laneInOut)
+        {
+            if (isSameDirection(mapLane, mapLine)) boundaryLine2InOut[mapLine] = laneInOut;
+            else boundaryLine2InOut[mapLine] = ReverseInOut(laneInOut);
+        }
+
+        InOut ReverseInOut(InOut inOut)
+        {
+            if (inOut == InOut.In) return InOut.Out;
+            else return InOut.In;
+        }
+
+        Vector3 GetPoint(MapDataPoints mapDataPoints, int index, InOut inOut)
+        {
+            var positions = mapDataPoints.mapWorldPositions;
+            var point = positions[index];
+            if (inOut == InOut.In) point = positions[positions.Count - 1 - index];
+            return point;
+        }
+
+        enum InOut {In, Out};
+
+        void AddInOutToDictionary(List<MapLane> lanes, Dictionary<MapLane, InOut> allConnectedLanes2InOut, InOut inOut)
+        {
+            foreach (var lane in lanes)
+            {
+                if (allConnectedLanes2InOut.ContainsKey(lane))
+                {
+                    if (allConnectedLanes2InOut[lane] != inOut)
+                        {
+                            var message = $"Lane {lane.name} {lane.GetInstanceID()} is added ";
+                            message += $"already and with {allConnectedLanes2InOut[lane]} not {inOut}";
+                            throw new Exception(message);
+                        }
+                    continue;
+                }
+                allConnectedLanes2InOut[lane] = inOut;
+            }
+        }
+
+        bool isSameDirection(MapLane mapLane, MapLine mapLine)
+        {
+            var lanePositions = mapLane.mapWorldPositions;
+            var linePositions = mapLine.mapWorldPositions;;
+            var dir = lanePositions.Last() - lanePositions[0];
+            var lineDir = linePositions.Last() - linePositions[0];
+            return Vector3.Dot(dir, lineDir) > 0;
         }
 
         void AlignPointsInCrossWalk(List<MapCrossWalk> crossWalkList)
@@ -1094,7 +1380,7 @@ namespace Simulator.Editor
             }
         }
 
-        List<Vector3> SplitLine(List<Vector3> line, float resolution, int partitions, bool reverse = false)
+        public static List<Vector3> SplitLine(List<Vector3> line, float resolution, int partitions, bool reverse = false)
         {
             List<Vector3> splittedLinePoints = new List<Vector3>();
             splittedLinePoints.Add(line[0]); // Add first point
@@ -1378,39 +1664,220 @@ namespace Simulator.Editor
 
         public void Export(string filePath)
         {
-            using (var file = File.Create(filePath))
-            using (var target = new XmlOsmStreamTarget(file))
+            if (Calculate())
             {
-                target.Generator = "LGSVL Simulator";
-                target.Initialize();
-
-                foreach (OsmGeo element in map)
+                using (var file = File.Create(filePath))
+                using (var target = new XmlOsmStreamTarget(file))
                 {
-                    if (element == null)
+                    target.Generator = "LGSVL Simulator";
+                    target.Initialize();
+
+                    foreach (OsmGeo element in map)
                     {
-                        continue;
+                        if (element == null)
+                        {
+                            continue;
+                        }
+
+                        if (element.Type == OsmGeoType.Node)
+                        {
+                            Node node = element as Node;
+                            target.AddNode(node);
+                        }
+                        else if (element.Type == OsmGeoType.Way)
+                        {
+                            Way way = element as Way;
+                            target.AddWay(way);
+                        }
+                        else if (element.Type == OsmGeoType.Relation)
+                        {
+                            Relation relation = element as Relation;
+                            target.AddRelation(relation);
+                        }
                     }
 
-                    if (element.Type == OsmGeoType.Node)
-                    {
-                        Node node = element as Node;
-                        target.AddNode(node);
-                    }
-                    else if (element.Type == OsmGeoType.Way)
-                    {
-                        Way way = element as Way;
-                        target.AddWay(way);
-                    }
-                    else if (element.Type == OsmGeoType.Relation)
-                    {
-                        Relation relation = element as Relation;
-                        target.AddRelation(relation);
-                    }
+                    target.Close();
                 }
-
-                target.Close();
+                Debug.Log("Successfully generated and exported Lanelet2 Map!");
+            }
+            else
+            {
+                Debug.LogError("Failed to export Lanelet2 Map!");
             }
         }
+
+        public void AddBoundaryTagToWay(MapLane lane, Way leftWay, Way rightWay)
+        {
+            // set boundary type
+            if (leftWay.Tags.ContainsKey("type")) {}
+            else if (lane.leftLineBoundry.lineType == MapData.LineType.DOTTED_WHITE)
+            {
+                leftWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                leftWay.Tags.Add(
+                    new Tag("subtype", "dashed")
+                );
+                leftWay.Tags.Add(
+                    new Tag("color", "white")
+                );
+            }
+            else if (lane.leftLineBoundry.lineType == MapData.LineType.DOTTED_YELLOW)
+            {
+                leftWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                leftWay.Tags.Add(
+                    new Tag("subtype", "dashed")
+                );
+                leftWay.Tags.Add(
+                    new Tag("color", "yellow")
+                );
+            }
+            else if (lane.leftLineBoundry.lineType == MapData.LineType.SOLID_WHITE)
+            {
+                leftWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                leftWay.Tags.Add(
+                    new Tag("subtype", "solid")
+                );
+                leftWay.Tags.Add(
+                    new Tag("color", "white")
+                );
+            }
+            else if (lane.leftLineBoundry.lineType == MapData.LineType.SOLID_YELLOW)
+            {
+                leftWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                leftWay.Tags.Add(
+                    new Tag("subtype", "solid")
+                );
+                leftWay.Tags.Add(
+                    new Tag("color", "yellow")
+                );
+            }
+            else if (lane.leftLineBoundry.lineType == MapData.LineType.DOUBLE_YELLOW)
+            {
+                leftWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                leftWay.Tags.Add(
+                    new Tag("subtype", "solid_solid")
+                );
+                leftWay.Tags.Add(
+                    new Tag("color", "yellow")
+                );
+            }
+            else if (lane.leftLineBoundry.lineType == MapData.LineType.CURB)
+            {
+                leftWay.Tags.Add(
+                    new Tag("type", "curbstone")
+                );
+                leftWay.Tags.Add(
+                    new Tag("subtype", "high")
+                );
+            }
+            else if (lane.leftLineBoundry.lineType == MapData.LineType.VIRTUAL)
+            {
+                leftWay.Tags.Add(
+                    new Tag("type", "virtual")
+                );
+            }
+            else
+            {
+                Debug.LogWarning($"Lane {lane.name} left boundary type is Unknown.");
+                leftWay.Tags.Add(
+                    new Tag("type", "unknown")
+                );
+            }
+
+            if (rightWay.Tags.ContainsKey("type")) {}
+            else if (lane.rightLineBoundry.lineType == MapData.LineType.DOTTED_WHITE)
+            {
+                rightWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                rightWay.Tags.Add(
+                    new Tag("subtype", "dashed")
+                );
+                rightWay.Tags.Add(
+                    new Tag("color", "white")
+                );
+            }
+            else if (lane.rightLineBoundry.lineType == MapData.LineType.DOTTED_YELLOW)
+            {
+                rightWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                rightWay.Tags.Add(
+                    new Tag("subtype", "dashed")
+                );
+                rightWay.Tags.Add(
+                    new Tag("color", "yellow")
+                );
+            }
+            else if (lane.rightLineBoundry.lineType == MapData.LineType.SOLID_WHITE)
+            {
+                rightWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                rightWay.Tags.Add(
+                    new Tag("subtype", "solid")
+                );
+                rightWay.Tags.Add(
+                    new Tag("color", "white")
+                );
+            }
+            else if (lane.rightLineBoundry.lineType == MapData.LineType.SOLID_YELLOW)
+            {
+                rightWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                rightWay.Tags.Add(
+                    new Tag("subtype", "solid")
+                );
+                rightWay.Tags.Add(
+                    new Tag("color", "yellow")
+                );
+            }
+            else if (lane.rightLineBoundry.lineType == MapData.LineType.DOUBLE_YELLOW)
+            {
+                rightWay.Tags.Add(
+                    new Tag("type", "line_thin")
+                );
+                rightWay.Tags.Add(
+                    new Tag("subtype", "solid_solid")
+                );
+                rightWay.Tags.Add(
+                    new Tag("color", "yellow")
+                );
+            }
+            else if (lane.rightLineBoundry.lineType == MapData.LineType.CURB)
+            {
+                rightWay.Tags.Add(
+                    new Tag("type", "curbstone")
+                );
+                rightWay.Tags.Add(
+                    new Tag("subtype", "high")
+                );
+            }
+            else if (lane.rightLineBoundry.lineType == MapData.LineType.VIRTUAL)
+            {
+                rightWay.Tags.Add(
+                    new Tag("type", "virtual")
+                );
+            }
+            else
+            {
+                Debug.LogWarning($"Lane {lane.name} left boundary type is Unknown.");
+                rightWay.Tags.Add(
+                    new Tag("type", "unknown")
+                );            
+            }
+        }
+
+
     }
 }
-

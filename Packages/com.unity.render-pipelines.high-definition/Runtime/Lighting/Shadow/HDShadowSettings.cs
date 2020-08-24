@@ -1,14 +1,19 @@
 using System;
-using UnityEngine.Rendering;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
+    /// <summary>
+    /// Settings for shadows.
+    /// </summary>
     [Serializable, VolumeComponentMenu("Shadowing/Shadows")]
     public class HDShadowSettings : VolumeComponent
     {
         float[] m_CascadeShadowSplits = new float[3];
         float[] m_CascadeShadowBorders = new float[4];
 
+        /// <summary>
+        /// Repartition of shadow cascade splits for directional lights.
+        /// </summary>
         public float[] cascadeShadowSplits
         {
             get
@@ -20,6 +25,9 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             }
         }
 
+        /// <summary>
+        /// Size of the border between each shadow cascades for directional lights.
+        /// </summary>
         public float[] cascadeShadowBorders
         {
             get
@@ -30,7 +38,7 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
                 m_CascadeShadowBorders[3] = cascadeShadowBorder3.value;
 
                 // For now we don't use shadow cascade borders but we still want to have the last split fading out.
-                if (!LightLoop.s_UseCascadeBorders)
+                if (!HDRenderPipeline.s_UseCascadeBorders)
                 {
                     m_CascadeShadowBorders[cascadeShadowSplitCount.value - 1] = 0.2f;
                 }
@@ -38,31 +46,44 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             }
         }
 
+        /// <summary>Sets the maximum distance HDRP renders shadows for all Light types.</summary>
         [Tooltip("Sets the maximum distance HDRP renders shadows for all Light types.")]
         public NoInterpMinFloatParameter        maxShadowDistance = new NoInterpMinFloatParameter(500.0f, 0.0f);
 
+        /// <summary>Multiplier for thick transmission for directional lights.</summary>
+        [Tooltip("Multiplier for thick transmission.")]
+        public ClampedFloatParameter            directionalTransmissionMultiplier = new ClampedFloatParameter(1.0f, 0.0f, 1.0f);
+
+        /// <summary>Number of cascades HDRP uses for cascaded shadow maps.</summary>
         [Tooltip("Controls the number of cascades HDRP uses for cascaded shadow maps.")]
         public NoInterpClampedIntParameter      cascadeShadowSplitCount = new NoInterpClampedIntParameter(4, 1, 4);
+        /// <summary>Position of the first cascade split as a percentage of Max Distance.</summary>
         [Tooltip("Sets the position of the first cascade split as a percentage of Max Distance.")]
-        public CascadePartitionSplitParameter cascadeShadowSplit0 = new CascadePartitionSplitParameter(0.05f);
+        public CascadePartitionSplitParameter   cascadeShadowSplit0 = new CascadePartitionSplitParameter(0.05f);
+        /// <summary>Position of the second cascade split as a percentage of Max Distance.</summary>
         [Tooltip("Sets the position of the second cascade split as a percentage of Max Distance.")]
-        public CascadePartitionSplitParameter cascadeShadowSplit1 = new CascadePartitionSplitParameter(0.15f);
-        [Tooltip("Sets the position of the third cascade split as a percentage of Max Distance.")]
-        public CascadePartitionSplitParameter cascadeShadowSplit2 = new CascadePartitionSplitParameter(0.3f);
+        public CascadePartitionSplitParameter   cascadeShadowSplit1 = new CascadePartitionSplitParameter(0.15f);
+        /// <summary>Sets the position of the third cascade split as a percentage of Max Distance.</summary>
+        [Tooltip("Position of the third cascade split as a percentage of Max Distance.")]
+        public CascadePartitionSplitParameter   cascadeShadowSplit2 = new CascadePartitionSplitParameter(0.3f);
+        /// <summary>Border size between the first and second cascade split.</summary>
         [Tooltip("Sets the border size between the first and second cascade split.")]
-        public CascadeEndBorderParameter cascadeShadowBorder0 = new CascadeEndBorderParameter(0.0f);
+        public CascadeEndBorderParameter        cascadeShadowBorder0 = new CascadeEndBorderParameter(0.0f);
+        /// <summary>Border size between the second and third cascade split.</summary>
         [Tooltip("Sets the border size between the second and third cascade split.")]
-        public CascadeEndBorderParameter cascadeShadowBorder1 = new CascadeEndBorderParameter(0.0f);
+        public CascadeEndBorderParameter        cascadeShadowBorder1 = new CascadeEndBorderParameter(0.0f);
+        /// <summary>Border size between the third and last cascade split.</summary>
         [Tooltip("Sets the border size between the third and last cascade split.")]
-        public CascadeEndBorderParameter cascadeShadowBorder2 = new CascadeEndBorderParameter(0.0f);
+        public CascadeEndBorderParameter        cascadeShadowBorder2 = new CascadeEndBorderParameter(0.0f);
+        /// <summary>Border size at the end of the last cascade split.</summary>
         [Tooltip("Sets the border size at the end of the last cascade split.")]
-        public CascadeEndBorderParameter cascadeShadowBorder3 = new CascadeEndBorderParameter(0.0f);
+        public CascadeEndBorderParameter        cascadeShadowBorder3 = new CascadeEndBorderParameter(0.0f);
 
 
         HDShadowSettings()
         {
             displayName = "Shadows";
-            
+
             cascadeShadowSplit0.Init(cascadeShadowSplitCount, 2, maxShadowDistance, null, cascadeShadowSplit1);
             cascadeShadowSplit1.Init(cascadeShadowSplitCount, 3, maxShadowDistance, cascadeShadowSplit0, cascadeShadowSplit2);
             cascadeShadowSplit2.Init(cascadeShadowSplitCount, 4, maxShadowDistance, cascadeShadowSplit1, null);
@@ -83,7 +104,10 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
             cascadeShadowBorder3.normalized = normalized;
         }
     }
-    
+
+    /// <summary>
+    /// Cascade Partition split parameter.
+    /// </summary>
     [Serializable]
     public class CascadePartitionSplitParameter : VolumeParameter<float>
     {
@@ -102,18 +126,27 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         internal float max => (cascadeCounts.value > minCascadeToAppears && next != null) ? next.value : 1f;
 
         internal float representationDistance => maxDistance.value;
-        
+
+        /// <summary>
+        /// Size of the split.
+        /// </summary>
         public override float value
         {
             get => m_Value;
             set => m_Value = Mathf.Clamp(value, min, max);
         }
 
+        /// <summary>
+        /// Cascade Partition split parameter constructor.
+        /// </summary>
+        /// <param name="value">Initial value.</param>
+        /// <param name="normalized">Partition is normalized.</param>
+        /// <param name="overrideState">Initial override state.</param>
         public CascadePartitionSplitParameter(float value, bool normalized = false, bool overrideState = false)
             : base(value, overrideState)
             => this.normalized = normalized;
 
-        public void Init(NoInterpClampedIntParameter cascadeCounts, int minCascadeToAppears, NoInterpMinFloatParameter maxDistance, CascadePartitionSplitParameter previous, CascadePartitionSplitParameter next)
+        internal void Init(NoInterpClampedIntParameter cascadeCounts, int minCascadeToAppears, NoInterpMinFloatParameter maxDistance, CascadePartitionSplitParameter previous, CascadePartitionSplitParameter next)
         {
             this.maxDistance = maxDistance;
             this.previous = previous;
@@ -123,6 +156,9 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         }
     }
 
+    /// <summary>
+    /// Cascade End Border parameter.
+    /// </summary>
     [Serializable]
     public class CascadeEndBorderParameter : VolumeParameter<float>
     {
@@ -139,17 +175,26 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
 
         internal float representationDistance => (((cascadeCounts.value > minCascadeToAppears && max != null) ? max.value : 1f) - (min?.value ?? 0f)) * maxDistance.value;
 
+        /// <summary>
+        /// Size of the border.
+        /// </summary>
         public override float value
         {
             get => m_Value;
             set => m_Value = Mathf.Clamp01(value);
         }
 
+        /// <summary>
+        /// Cascade End Border parameter constructor.
+        /// </summary>
+        /// <param name="value">Initial value.</param>
+        /// <param name="normalized">Normalized.</param>
+        /// <param name="overrideState">Initial override state.</param>
         public CascadeEndBorderParameter(float value, bool normalized = false, bool overrideState = false)
             : base(value, overrideState)
             => this.normalized = normalized;
 
-        public void Init(NoInterpClampedIntParameter cascadeCounts, int minCascadeToAppears, NoInterpMinFloatParameter maxDistance, CascadePartitionSplitParameter min, CascadePartitionSplitParameter max)
+        internal void Init(NoInterpClampedIntParameter cascadeCounts, int minCascadeToAppears, NoInterpMinFloatParameter maxDistance, CascadePartitionSplitParameter min, CascadePartitionSplitParameter max)
         {
             this.maxDistance = maxDistance;
             this.min = min;

@@ -63,27 +63,31 @@ Shader "HDRP/AxF"
         _CarPaint2_CTCoeffs("_CarPaint2_CTCoeffs", Vector) = (1,1,1,1)
         _CarPaint2_CTSpreads("_CarPaint2_CTSpreads", Vector) = (1,1,1,1)
 
-//      [ToggleUI]  _AlphaCutoffEnable("Alpha Cutoff Enable", Float) = 0.0
+        [ToggleUI]  _UseShadowThreshold("_UseShadowThreshold", Float) = 0.0
+        [ToggleUI]  _AlphaCutoffEnable("Alpha Cutoff Enable", Float) = 0.0
         _AlphaCutoff("Alpha Cutoff", Range(0.0, 1.0)) = 0.5
+        _AlphaCutoffShadow("_AlphaCutoffShadow", Range(0.0, 1.0)) = 0.5
+
         _TransparentSortPriority("_TransparentSortPriority", Float) = 0
 
         // Stencil state
         // Forward
-        [HideInInspector] _StencilRef("_StencilRef", Int) = 2 // StencilLightingUsage.RegularLighting
-        [HideInInspector] _StencilWriteMask("_StencilWriteMask", Int) = 3 // StencilMask.Lighting
+        [HideInInspector] _StencilRef("_StencilRef", Int) = 0   // StencilUsage.Clear
+        [HideInInspector] _StencilWriteMask("_StencilWriteMask", Int) = 3 // StencilUsage.RequiresDeferredLighting | StencilUsage.SubsurfaceScattering
         // Depth prepass
         [HideInInspector] _StencilRefDepth("_StencilRefDepth", Int) = 16 // DecalsForwardOutputNormalBuffer
         [HideInInspector] _StencilWriteMaskDepth("_StencilWriteMaskDepth", Int) = 48 // DoesntReceiveSSR | DecalsForwardOutputNormalBuffer
         // Motion vector pass
-        [HideInInspector] _StencilRefMV("_StencilRefMV", Int) = 128 // StencilBitMask.ObjectMotionVectors
-        [HideInInspector] _StencilWriteMaskMV("_StencilWriteMaskMV", Int) = 128 // StencilBitMask.ObjectMotionVectors
+        [HideInInspector] _StencilRefMV("_StencilRefMV", Int) = 32 // StencilUsage.ObjectMotionVector
+        [HideInInspector] _StencilWriteMaskMV("_StencilWriteMaskMV", Int) = 32 // StencilUsage.ObjectMotionVector
 
         // Blending state
         [HideInInspector] _SurfaceType("__surfacetype", Float) = 0.0
         [HideInInspector] _BlendMode("__blendmode", Float) = 0.0
         [HideInInspector] _SrcBlend("__src", Float) = 1.0
         [HideInInspector] _DstBlend("__dst", Float) = 0.0
-        [HideInInspector] _ZWrite("__zw", Float) = 1.0
+        [HideInInspector][ToggleUI] _ZWrite("__zw", Float) = 1.0
+        [HideInInspector][ToggleUI] _TransparentZWrite("_TransparentZWrite", Float) = 0.0
         [HideInInspector] _CullMode("__cullmode", Float) = 2.0
         [HideInInspector] _CullModeForward("__cullmodeForward", Float) = 2.0 // This mode is dedicated to Forward to correctly handle backface then front face rendering thin transparent
         [HideInInspector] _ZTestDepthEqualForOpaque("_ZTestDepthEqualForOpaque", Int) = 4 // Less equal
@@ -110,6 +114,9 @@ Shader "HDRP/AxF"
 
         [ToggleUI] _SupportDecals("Support Decals", Float) = 1.0
         [ToggleUI] _ReceivesSSR("Receives SSR", Float) = 1.0
+
+        [ToggleUI] _AddPrecomputedVelocity("AddPrecomputedVelocity", Float) = 0.0
+
     }
 
     HLSLINCLUDE
@@ -125,8 +132,10 @@ Shader "HDRP/AxF"
     #pragma shader_feature_local _ALPHATEST_ON
     #pragma shader_feature_local _DOUBLESIDED_ON
 
-    #pragma shader_feature _DISABLE_DECALS
-    #pragma shader_feature _DISABLE_SSR
+    #pragma shader_feature_local _DISABLE_DECALS
+    #pragma shader_feature_local _DISABLE_SSR
+
+    #pragma shader_feature_local _ADD_PRECOMPUTED_VELOCITY
 
     // Keyword for transparent
     #pragma shader_feature _SURFACE_TYPE_TRANSPARENT
@@ -165,7 +174,7 @@ Shader "HDRP/AxF"
     SubShader
     {
         // This tags allow to use the shader replacement features
-        Tags{ "RenderPipeline" = "HDRenderPipeline" "RenderType" = "HDAxFShader" }
+        Tags{ "RenderPipeline" = "HDRenderPipeline" "RenderType" = "HDLitShader" }
 
         Pass
         {
@@ -190,76 +199,7 @@ Shader "HDRP/AxF"
             #pragma vertex Vert
             #pragma fragment Frag
 
-            ENDHLSL
-        }
-
-        Pass
-        {
-            Name "DepthForwardOnly"
-            Tags{ "LightMode" = "DepthForwardOnly" }
-
-            Cull[_CullMode]
-
-            ZWrite On
-
-            Stencil
-            {
-                WriteMask[_StencilRefDepth]
-                Ref[_StencilWriteMaskDepth]
-                Comp Always
-                Pass Replace
-            }
-
-            HLSLPROGRAM
-
-            #define WRITE_NORMAL_BUFFER
-            #pragma multi_compile _ WRITE_MSAA_DEPTH
-
-            #define SHADERPASS SHADERPASS_DEPTH_ONLY
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Material.hlsl"
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/AxF.hlsl"
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/ShaderPass/AxFSharePass.hlsl"
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/AxFData.hlsl"
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/ShaderPass/ShaderPassDepthOnly.hlsl"
-
-            #pragma vertex Vert
-            #pragma fragment Frag
-
-            ENDHLSL
-        }
-
-        Pass
-        {
-            Name "MotionVectors"
-            Tags{ "LightMode" = "MotionVectors" } // Caution, this need to be call like this to setup the correct parameters by C++ (legacy Unity)
-
-            // If velocity pass (motion vectors) is enabled we tag the stencil so it don't perform CameraMotionVelocity
-            Stencil
-            {
-                WriteMask [_StencilWriteMaskMV]
-                Ref [_StencilRefMV]
-                Comp Always
-                Pass Replace
-            }
-
-            Cull[_CullMode]
-
-            ZWrite On
-
-            HLSLPROGRAM
-
-            #define WRITE_NORMAL_BUFFER
-            #pragma multi_compile _ WRITE_MSAA_DEPTH
-            
-            #define SHADERPASS SHADERPASS_MOTION_VECTORS
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Material.hlsl"
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/AxF.hlsl"
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/ShaderPass/AxFSharePass.hlsl"
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/AxFData.hlsl"
-            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/ShaderPass/ShaderPassMotionVectors.hlsl"
-
-            #pragma vertex Vert
-            #pragma fragment Frag
+            #pragma editor_sync_compilation
 
             ENDHLSL
         }
@@ -271,7 +211,6 @@ Shader "HDRP/AxF"
             Name "META"
             Tags{ "LightMode" = "META" }
 
-            Cull Off
 
             HLSLPROGRAM
 
@@ -320,6 +259,77 @@ Shader "HDRP/AxF"
             ENDHLSL
         }
 
+        Pass
+        {
+            Name "DepthForwardOnly"
+            Tags{ "LightMode" = "DepthForwardOnly" }
+
+            Cull[_CullMode]
+
+            ZWrite On
+
+            Stencil
+            {
+                WriteMask[_StencilWriteMaskDepth]
+                Ref[_StencilRefDepth]
+                Comp Always
+                Pass Replace
+            }
+
+            HLSLPROGRAM
+
+            #define WRITE_NORMAL_BUFFER
+            #pragma multi_compile _ WRITE_MSAA_DEPTH
+
+            #define SHADERPASS SHADERPASS_DEPTH_ONLY
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Material.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/AxF.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/ShaderPass/AxFSharePass.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/AxFData.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/ShaderPass/ShaderPassDepthOnly.hlsl"
+
+            #pragma vertex Vert
+            #pragma fragment Frag
+
+            ENDHLSL
+        }
+
+        Pass
+        {
+            Name "MotionVectors"
+            Tags{ "LightMode" = "MotionVectors" } // Caution, this need to be call like this to setup the correct parameters by C++ (legacy Unity)
+
+            // If velocity pass (motion vectors) is enabled we tag the stencil so it don't perform CameraMotionVelocity
+            Stencil
+            {
+                WriteMask [_StencilWriteMaskMV]
+                Ref [_StencilRefMV]
+                Comp Always
+                Pass Replace
+            }
+
+            Cull[_CullMode]
+
+            ZWrite On
+
+            HLSLPROGRAM
+
+            #define WRITE_NORMAL_BUFFER
+            #pragma multi_compile _ WRITE_MSAA_DEPTH
+
+            #define SHADERPASS SHADERPASS_MOTION_VECTORS
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/Material.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/AxF.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/ShaderPass/AxFSharePass.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/Material/AxF/AxFData.hlsl"
+            #include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/ShaderPass/ShaderPassMotionVectors.hlsl"
+
+            #pragma vertex Vert
+            #pragma fragment Frag
+
+            ENDHLSL
+        }
+
         // AxF shader always render in forward
         Pass
         {
@@ -334,11 +344,12 @@ Shader "HDRP/AxF"
                 Pass Replace
             }
 
-            Blend [_SrcBlend] [_DstBlend]
+            Blend [_SrcBlend] [_DstBlend], [_AlphaSrcBlend] [_AlphaDstBlend]
             // In case of forward we want to have depth equal for opaque mesh
             ZTest [_ZTestDepthEqualForOpaque]
             ZWrite [_ZWrite]
             Cull [_CullModeForward]
+            ColorMask [_ColorMaskTransparentVel] 1
 
             HLSLPROGRAM
 
@@ -349,9 +360,9 @@ Shader "HDRP/AxF"
             #pragma multi_compile _ SHADOWS_SHADOWMASK
             // Setup DECALS_OFF so the shader stripper can remove variants
             #pragma multi_compile DECALS_OFF DECALS_3RT DECALS_4RT
-            
+
             // Supported shadow modes per light type
-            #pragma multi_compile SHADOW_LOW SHADOW_MEDIUM SHADOW_HIGH SHADOW_VERY_HIGH
+            #pragma multi_compile SHADOW_LOW SHADOW_MEDIUM SHADOW_HIGH
 
             #pragma multi_compile USE_FPTL_LIGHTLIST USE_CLUSTERED_LIGHTLIST
 
@@ -393,5 +404,5 @@ Shader "HDRP/AxF"
 
     }
 
-    CustomEditor "Experimental.Rendering.HDPipeline.AxFGUI"
+    CustomEditor "Rendering.HighDefinition.AxFGUI"
 }

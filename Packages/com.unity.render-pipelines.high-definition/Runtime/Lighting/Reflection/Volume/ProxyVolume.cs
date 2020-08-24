@@ -1,8 +1,13 @@
 using System;
 using UnityEngine.Serialization;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
+    /// <summary>
+    /// A proxy volume.
+    ///
+    /// This volume approximate the scene geometry with simple mathematical shapes.
+    /// </summary>
     [Serializable]
     public partial class ProxyVolume
     {

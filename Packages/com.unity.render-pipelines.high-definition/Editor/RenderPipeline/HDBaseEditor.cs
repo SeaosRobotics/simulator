@@ -1,8 +1,8 @@
 using UnityEditor.Rendering;
-using UnityEngine.Experimental.Rendering.HDPipeline;
+using UnityEngine.Rendering.HighDefinition;
 using UnityEngine.Rendering;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline
+namespace UnityEditor.Rendering.HighDefinition
 {
     using UnityObject = UnityEngine.Object;
 
@@ -26,7 +26,7 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
     //     }
     // }
     //
-    public class HDBaseEditor<T> : Editor
+    class HDBaseEditor<T> : Editor
         where T : UnityObject
     {
         internal PropertyFetcher<T> properties { get; private set; }

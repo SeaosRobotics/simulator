@@ -12,12 +12,26 @@ namespace Simulator.Database.Services
 {
     public class ClusterService : IClusterService
     {
-        public IEnumerable<ClusterModel> List(int page, int count, string owner)
+        public IEnumerable<ClusterModel> List(string filter, int offset, int count, string owner)
         {
             using (var db = DatabaseManager.Open())
             {
-                var sql = Sql.Builder.Where("owner = @0 OR owner IS NULL", owner);
-                return db.Page<ClusterModel>(page, count, sql).Items;
+                if (!string.IsNullOrEmpty(filter))
+                {
+                    var cleanFilter = $"%{filter.Replace("%", "").Replace("_", "")}%";
+                    var filterSql = Sql.Builder
+                        .Where(@"(name LIKE @0)", cleanFilter)
+                        .OrderBy("id")
+                        .Append("LIMIT @0, @1", offset, count);
+                    return db.Fetch<ClusterModel>(filterSql);
+                }
+
+                var sql = Sql.Builder
+                    .Where("owner = @0 OR owner IS NULL", owner)
+                    .OrderBy("id")
+                    .Append("LIMIT @0, @1", offset, count);
+
+                return db.Fetch<ClusterModel>(sql);
             }
         }
 

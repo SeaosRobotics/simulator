@@ -1,8 +1,9 @@
-﻿Shader "Hidden/HDRP/DownsampleDepth"
+Shader "Hidden/HDRP/DownsampleDepth"
 {
     HLSLINCLUDE
 
         #pragma target 4.5
+        #pragma editor_sync_compilation
         #pragma multi_compile_local MIN_DOWNSAMPLE CHECKERBOARD_DOWNSAMPLE
         #pragma only_renderers d3d11 ps4 xboxone vulkan metal switch
         #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/Common.hlsl"
@@ -51,6 +52,7 @@
 
         void Frag(Varyings input, out float outputDepth : SV_Depth)
         {
+            UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
             uint2 fullResUpperCorner = uint2(input.positionCS.xy * 2.0);
             float4 depths;
             depths.x = LoadCameraDepth(fullResUpperCorner);
@@ -73,7 +75,7 @@
 
         Pass
         {
-            ZWrite On ZTest Off Blend Off Cull Off
+            ZWrite On Blend Off Cull Off ZTest Always
 
             HLSLPROGRAM
                 #pragma vertex Vert

@@ -30,17 +30,22 @@ namespace Simulator.Database
 
         static string GetDatabasePath()
         {
-            return Path.Combine(Application.persistentDataPath, "data.db");
+            return Path.Combine(Config.PersistentDataPath, "data.db");
         }
 
         static string GetBackupPath()
         {
-            return Path.Combine(Application.persistentDataPath, "backup.db");
+            return Path.Combine(Config.PersistentDataPath, "backup.db");
         }
 
         public static string GetConnectionString()
         {
             return $"Data Source = {GetDatabasePath()};version=3;";
+        }
+
+        static string UncapitaliseInvariant(string word)
+        {
+            return word.Substring(0, 1).ToLowerInvariant() + word.Substring(1);
         }
 
         public static IDatabaseBuildConfiguration GetConfig(string connectionString)
@@ -51,10 +56,10 @@ namespace Simulator.Database
                 .UsingDefaultMapper<ConventionMapper>(m =>
                 {
                     // Vehicle => vehicles
-                    m.InflectTableName = (inflector, tn) => inflector.Pluralise(inflector.Uncapitalise(tn));
+                    m.InflectTableName = (inflector, tn) => inflector.Pluralise(UncapitaliseInvariant(tn));
 
                     // TimeOfDay => timeOfDay
-                    m.InflectColumnName = (inflector, cn) => inflector.Uncapitalise(cn);
+                    m.InflectColumnName = (inflector, cn) => UncapitaliseInvariant(cn);
                 });
         }
 
@@ -170,27 +175,10 @@ namespace Simulator.Database
 
         static void CreateDefaultDbAssets()
         {
-            string os;
-            if (SystemInfo.operatingSystemFamily == OperatingSystemFamily.Windows)
-            {
-                os = "windows";
-            }
-            else if (SystemInfo.operatingSystemFamily == OperatingSystemFamily.Linux)
-            {
-                os = "linux";
-            }
-            else if (SystemInfo.operatingSystemFamily == OperatingSystemFamily.MacOSX)
-            {
-                os = "macos";
-            }
-            else
-            {
-                return;
-            }
-
             var info = Resources.Load<Utilities.BuildInfo>("BuildInfo");
-            if (info == null || info.GitCommit == null || info.DownloadHost == null)
+            if (info == null || info.DownloadHost == null)
             {
+                Debug.Log("*** No debug info, or downloadhost is nulll");
                 return;
             }
 
@@ -202,11 +190,11 @@ namespace Simulator.Database
                 {
                     foreach (var e in info.DownloadEnvironments)
                     {
-                        var url = $"https://{info.DownloadHost}/{info.GitCommit}/{os}/environment_{e.ToLowerInvariant()}";
+                        var url = $"https://{info.DownloadHost}/{e.Id}/environment_{e.Name}";
                         var localPath = WebUtilities.GenerateLocalPath("Maps");
                         var map = new MapModel()
                         {
-                            Name = e,
+                            Name = e.Name,
                             Status = "Downloading",
                             Url = url,
                             LocalPath = localPath,
@@ -230,24 +218,24 @@ namespace Simulator.Database
                     foreach (var v in info.DownloadVehicles)
                     {
                         var localPath = WebUtilities.GenerateLocalPath("Vehicles");
-                        if (v == "Jaguar2015XE")
+                        if (v.Name == "Jaguar2015XE")
                         {
-                            AddVehicle(db, info, os, v, localPath, DefaultSensors.Autoware, " (Autoware)", new RosBridgeFactory().Name);
-                            AddVehicle(db, info, os, v, localPath, DefaultSensors.Apollo30, " (Apollo 3.0)", new RosApolloBridgeFactory().Name);
+                            AddVehicle(db, info, v, localPath, DefaultSensors.Autoware, " (Autoware)", new RosBridgeFactory().Name);
+                            AddVehicle(db, info, v, localPath, DefaultSensors.Apollo30, " (Apollo 3.0)", new RosApolloBridgeFactory().Name);
 
-                            noBridgeVehicle = AddVehicle(db, info, os, v, localPath, DefaultSensors.DataCollection, " (No Bridge)");
+                            noBridgeVehicle = AddVehicle(db, info, v, localPath, DefaultSensors.DataCollection, " (No Bridge)");
                         }
-                        else if (v == "Lexus2016RXHybrid")
+                        else if (v.Name == "Lexus2016RXHybrid")
                         {
-                            autowareVehicle = AddVehicle(db, info, os, v, localPath, DefaultSensors.Autoware, " (Autoware)", new RosBridgeFactory().Name);
+                            autowareVehicle = AddVehicle(db, info, v, localPath, DefaultSensors.Autoware, " (Autoware)", new RosBridgeFactory().Name);
                         }
-                        else if (v == "Lincoln2017MKZ")
+                        else if (v.Name == "Lincoln2017MKZ")
                         {
-                            apolloVehicle = AddVehicle(db, info, os, v, localPath, DefaultSensors.Apollo50, " (Apollo 5.0)", new CyberBridgeFactory().Name);
+                            apolloVehicle = AddVehicle(db, info, v, localPath, DefaultSensors.Apollo50, " (Apollo 5.0)", new CyberBridgeFactory().Name);
                         }
                         else
                         {
-                            apolloVehicle = AddVehicle(db, info, os, v, localPath, DefaultSensors.Apollo50, " (Apollo 5.0)", new CyberBridgeFactory().Name);
+                            apolloVehicle = AddVehicle(db, info, v, localPath, DefaultSensors.Apollo50, " (Apollo 5.0)", new CyberBridgeFactory().Name);
                         }
                     }
                 }
@@ -337,12 +325,12 @@ namespace Simulator.Database
             db.Insert(conn);
         }
 
-        static long AddVehicle(IDatabase db, Utilities.BuildInfo info, string os, string name, string localPath, string sensors, string suffix = null, string bridge = null)
+        static long AddVehicle(IDatabase db, Utilities.BuildInfo info, Utilities.BuildItem item, string localPath, string sensors, string suffix = null, string bridge = null)
         {
-            var url = $"https://{info.DownloadHost}/{info.GitCommit}/{os}/vehicle_{name.ToLowerInvariant()}";
+            var url = $"https://{info.DownloadHost}/{item.Id}/vehicle_{item.Name}";
             var vehicle = new VehicleModel()
             {
-                Name = name + (suffix == null ? string.Empty : suffix),
+                Name = item.Name + (suffix == null ? string.Empty : suffix),
                 Status = "Downloading",
                 Url = url,
                 LocalPath = localPath,

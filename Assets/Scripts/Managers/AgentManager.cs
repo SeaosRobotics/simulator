@@ -6,41 +6,62 @@
  */
 
 using System;
+using System.IO;
+using System.Text;
 using System.Linq;
 using System.Collections.Generic;
 using UnityEngine;
-using SimpleJSON;
+using Simulator;
 using Simulator.Sensors;
 using Simulator.Utilities;
 using Simulator.Components;
 using Simulator.Database;
+using SimpleJSON;
 using PetaPoco;
-using Simulator;
+using YamlDotNet.Serialization;
+using ICSharpCode.SharpZipLib.Zip;
+using ICSharpCode.SharpZipLib.Core;
+using Simulator.Network.Core;
+using Simulator.Network.Core.Components;
+using Simulator.Network.Core.Messaging;
+using Simulator.FMU;
+using Simulator.Network.Shared;
+using UnityEngine.Rendering.HighDefinition;
 
 public class AgentManager : MonoBehaviour
 {
+    private MessagesManager networkMessagesManager;
+    public string Key { get; } = "AgentManager";
+    
     public GameObject CurrentActiveAgent { get; private set; } = null;
-    public List<GameObject> ActiveAgents { get; private set; } = new List<GameObject>();
+    public AgentController CurrentActiveAgentController { get; private set; } = null;
+    public List<AgentConfig> ActiveAgents { get; private set; } = new List<AgentConfig>();
 
-    public event Action<GameObject> AgentChanged;
-
-    private void OnDestroy()
+    public MessagesManager NetworkMessagesManager
     {
-        for (int i = 0; i < ActiveAgents.Count; i++)
+        get
         {
-            DestroyAgent(ActiveAgents[i]);
+            if (networkMessagesManager == null) 
+                networkMessagesManager = Loader.Instance.Network.MessagesManager;
+            return networkMessagesManager;
         }
     }
 
+    public event Action<GameObject> AgentChanged;
+
     public GameObject SpawnAgent(AgentConfig config)
     {
-        var go = Instantiate(config.Prefab);
+        var go = Instantiate(config.Prefab, transform);
         go.name = config.Name;
         var agentController = go.GetComponent<AgentController>();
+        agentController.SensorsChanged += AgentControllerOnSensorsChanged;
         agentController.Config = config;
+        agentController.Config.AgentGO = go;
         SIM.LogSimulation(SIM.Simulation.VehicleStart, config.Name);
-        ActiveAgents.Add(go);
+        
+        ActiveAgents.Add(agentController.Config);
         agentController.GTID = ++SimulatorManager.Instance.GTIDs;
+        agentController.Config.GTID = agentController.GTID;
 
         BridgeClient bridgeClient = null;
         if (config.Bridge != null)
@@ -59,14 +80,55 @@ public class AgentManager : MonoBehaviour
             }
         }
         SIM.LogSimulation(SIM.Simulation.BridgeTypeStart, config.Bridge != null ? config.Bridge.Name : "None");
-        if (!string.IsNullOrEmpty(config.Sensors))
+        var sensorsController = go.AddComponent<SensorsController>();
+        agentController.AgentSensorsController = sensorsController;
+        sensorsController.SetupSensors(config.Sensors);
+
+        //Add required components for distributing rigidbody from master to clients
+        var network = Loader.Instance.Network;
+        if (network.IsClusterSimulation)
         {
-            SetupSensors(go, config.Sensors, bridgeClient);
+            HierarchyUtilities.ChangeToUniqueName(go);
+            if (network.IsClient)
+            {
+                //Disable controller and dynamics on clients so it will not interfere mocked components
+                agentController.enabled = false;
+                var vehicleDynamics = agentController.GetComponent<IVehicleDynamics>() as MonoBehaviour;
+                if (vehicleDynamics != null)
+                    vehicleDynamics.enabled = false;
+            }
+            
+            //Change the simulation type only if it's not set in the prefab
+            var distributedRigidbody = go.GetComponent<DistributedRigidbody>();
+            if (distributedRigidbody == null)
+            {
+                distributedRigidbody = go.AddComponent<DistributedRigidbody>();
+                distributedRigidbody.SimulationType = DistributedRigidbody.MockingSimulationType.ExtrapolateVelocities;
+            }
+
+            //Add the rest required components for cluster simulation
+            ClusterSimulationUtilities.AddDistributedComponents(go);
         }
-        
+
         go.transform.position = config.Position;
         go.transform.rotation = config.Rotation;
         agentController.Init();
+
+#if UNITY_EDITOR
+        // TODO remove hack for editor opaque with alpha clipping 2019.3.3
+        Array.ForEach(go.GetComponentsInChildren<Renderer>(), renderer =>
+        {
+            foreach (var m in renderer.materials)
+            {
+                m.shader = Shader.Find(m.shader.name);
+            }
+        });
+
+        Array.ForEach(go.GetComponentsInChildren<DecalProjector>(), decal =>
+        {
+            decal.material.shader = Shader.Find(decal.material.shader.name);
+        });
+#endif
 
         return go;
     }
@@ -83,7 +145,13 @@ public class AgentManager : MonoBehaviour
 
     public void SetupDevAgents()
     {
-        ActiveAgents.AddRange(GameObject.FindGameObjectsWithTag("Player"));
+        var sceneAgents = GameObject.FindGameObjectsWithTag("Player");
+        foreach (var agent in sceneAgents)
+        {
+            var config = agent.GetComponent<AgentController>().Config;
+            config.AgentGO = agent;
+            ActiveAgents.Add(config);
+        }
 
         if (ActiveAgents.Count == 0)
         {
@@ -112,46 +180,123 @@ public class AgentManager : MonoBehaviour
                             {
                                 var bundlePath = vehicle.LocalPath;
 
-                                var vehicleBundle = AssetBundle.LoadFromFile(bundlePath);
-                                if (vehicleBundle == null)
+                                using (ZipFile zip = new ZipFile(bundlePath))
                                 {
-                                    throw new Exception($"Failed to load vehicle from '{bundlePath}' asset bundle");
-                                }
-
-                                try
-                                {
-                                    var vehicleAssets = vehicleBundle.GetAllAssetNames();
-                                    if (vehicleAssets.Length != 1)
+                                    Manifest manifest;
+                                    ZipEntry entry = zip.GetEntry("manifest");
+                                    using (var ms = zip.GetInputStream(entry))
                                     {
-                                        throw new Exception($"Unsupported vehicle in '{bundlePath}' asset bundle, only 1 asset expected");
+                                        int streamSize = (int)entry.Size;
+                                        byte[] buffer = new byte[streamSize];
+                                        streamSize = ms.Read(buffer, 0, streamSize);
+                                        manifest = new Deserializer().Deserialize<Manifest>(Encoding.UTF8.GetString(buffer, 0, streamSize));
                                     }
 
-                                    var prefab = vehicleBundle.LoadAsset<GameObject>(vehicleAssets[0]);
-                                    var config = new AgentConfig()
+                                    if (manifest.bundleFormat != BundleConfig.Versions[BundleConfig.BundleTypes.Vehicle])
                                     {
-                                        Name = vehicle.Name,
-                                        Prefab = prefab,
-                                        Sensors = vehicle.Sensors,
-                                        Connection = json["Connection"].Value,
-                                    };
-                                    if (!string.IsNullOrEmpty(vehicle.BridgeType))
+                                        throw new Exception("Out of date Vehicle AssetBundle. Please check content website for updated bundle or rebuild the bundle.");
+                                    }
+
+                                    AssetBundle textureBundle = null;
+
+                                    if (zip.FindEntry($"{manifest.assetGuid}_vehicle_textures", true) != -1)
                                     {
-                                        config.Bridge = Simulator.Web.Config.Bridges.Find(bridge => bridge.Name == vehicle.BridgeType);
-                                        if (config.Bridge == null)
+                                        var texStream = zip.GetInputStream(zip.GetEntry($"{manifest.assetGuid}_vehicle_textures"));
+                                        textureBundle = AssetBundle.LoadFromStream(texStream, 0, 1 << 20);
+                                    }
+
+                                    string platform = SystemInfo.operatingSystemFamily == OperatingSystemFamily.Windows ? "windows" : "linux";
+                                    var mapStream = zip.GetInputStream(zip.GetEntry($"{manifest.assetGuid}_vehicle_main_{platform}"));
+                                    var vehicleBundle = AssetBundle.LoadFromStream(mapStream, 0, 1 << 20);
+
+                                    if (vehicleBundle == null)
+                                    {
+                                        throw new Exception($"Failed to load '{bundlePath}' vehicle asset bundle");
+                                    }
+
+                                    try
+                                    {
+                                        var vehicleAssets = vehicleBundle.GetAllAssetNames();
+                                        if (vehicleAssets.Length != 1)
                                         {
-                                            throw new Exception($"Bridge {vehicle.BridgeType} not found");
+                                            throw new Exception($"Unsupported '{bundlePath}' vehicle asset bundle, only 1 asset expected");
                                         }
+
+                                        textureBundle?.LoadAllAssets();
+
+                                        if (manifest.fmuName != "")
+                                        {
+                                            var fmuDirectory = Path.Combine(Application.persistentDataPath, manifest.assetName);
+                                            if (platform == "windows")
+                                            {
+                                                var dll = zip.GetEntry($"{manifest.fmuName}_windows.dll");
+                                                if (dll == null)
+                                                {
+                                                    throw new ArgumentException($"{manifest.fmuName}.dll not found in Zip");
+                                                }
+
+                                                using (Stream s = zip.GetInputStream(dll))
+                                                {
+                                                    byte[] buffer = new byte[4096];
+                                                    Directory.CreateDirectory(fmuDirectory);
+                                                    var path = Path.Combine(Application.persistentDataPath, manifest.assetName, $"{manifest.fmuName}.dll");
+                                                    using (FileStream streamWriter = File.Create(path))
+                                                    {
+                                                        StreamUtils.Copy(s, streamWriter, buffer);
+                                                    }
+                                                    vehicleBundle.LoadAsset<GameObject>(vehicleAssets[0]).GetComponent<VehicleFMU>().FMUData.Path = path;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                var dll = zip.GetEntry($"{manifest.fmuName}_linux.so");
+                                                if (dll == null)
+                                                {
+                                                    throw new ArgumentException($"{manifest.fmuName}.so not found in Zip");
+                                                }
+
+                                                using (Stream s = zip.GetInputStream(dll))
+                                                {
+                                                    byte[] buffer = new byte[4096];
+                                                    Directory.CreateDirectory(fmuDirectory);
+                                                    var path = Path.Combine(Application.persistentDataPath, manifest.assetName, $"{manifest.fmuName}.so");
+                                                    using (FileStream streamWriter = File.Create(path))
+                                                    {
+                                                        StreamUtils.Copy(s, streamWriter, buffer);
+                                                    }
+                                                    vehicleBundle.LoadAsset<GameObject>(vehicleAssets[0]).GetComponent<VehicleFMU>().FMUData.Path = path;
+                                                }
+                                            }
+                                        }
+
+                                        var prefab = vehicleBundle.LoadAsset<GameObject>(vehicleAssets[0]);
+                                        var config = new AgentConfig()
+                                        {
+                                            Name = vehicle.Name,
+                                            Prefab = prefab,
+                                            Sensors = vehicle.Sensors,
+                                            Connection = json["Connection"].Value,
+                                        };
+                                        if (!string.IsNullOrEmpty(vehicle.BridgeType))
+                                        {
+                                            config.Bridge = Simulator.Web.Config.Bridges.Find(bridge => bridge.Name == vehicle.BridgeType);
+                                            if (config.Bridge == null)
+                                            {
+                                                throw new Exception($"Bridge {vehicle.BridgeType} not found");
+                                            }
+                                        }
+
+                                        var spawn = FindObjectsOfType<SpawnInfo>().OrderBy(s => s.name).FirstOrDefault();
+                                        config.Position = spawn != null ? spawn.transform.position : Vector3.zero;
+                                        config.Rotation = spawn != null ? spawn.transform.rotation : Quaternion.identity;
+
+                                        SpawnAgent(config);
                                     }
-
-                                    var spawn = FindObjectsOfType<SpawnInfo>().OrderBy(s => s.name).FirstOrDefault();
-                                    config.Position = spawn != null ? spawn.transform.position : Vector3.zero;
-                                    config.Rotation = spawn != null ? spawn.transform.rotation : Quaternion.identity;
-
-                                    SpawnAgent(config);
-                                }
-                                finally
-                                {
-                                    vehicleBundle.Unload(false);
+                                    finally
+                                    {
+                                        textureBundle?.Unload(false);
+                                        vehicleBundle.Unload(false);
+                                    }
                                 }
                             }
                         }
@@ -165,16 +310,25 @@ public class AgentManager : MonoBehaviour
         }
         else
         {
-            var go = ActiveAgents[0];
+            var config = ActiveAgents[0];
 
-            var bridgeClient = go.AddComponent<BridgeClient>();
+            var bridgeClient = config.AgentGO.AddComponent<BridgeClient>();
             bridgeClient.Init(new Simulator.Bridge.Ros.RosApolloBridgeFactory());
             bridgeClient.Connect("localhost", 9090);
 
-            SetupSensors(go, DefaultSensors.Apollo30, bridgeClient);
+            var sensorsController = config.AgentGO.GetComponent<SensorsController>();
+            if (sensorsController == null)
+            {
+                sensorsController = config.AgentGO.AddComponent<SensorsController>();
+                var agentController = config.AgentGO.GetComponent<AgentController>();
+                if (agentController != null)
+                    agentController.AgentSensorsController = sensorsController;
+            }
+
+            sensorsController.SetupSensors(DefaultSensors.Apollo30);
         }
 
-        ActiveAgents.ForEach(agent => agent.GetComponent<AgentController>().Init());
+        ActiveAgents.ForEach(agent => agent.AgentGO.GetComponent<AgentController>().Init());
 
         SetCurrentActiveAgent(0);
     }
@@ -184,7 +338,7 @@ public class AgentManager : MonoBehaviour
         Debug.Assert(agent != null);
         for (int i = 0; i < ActiveAgents.Count; i++)
         {
-            if (ActiveAgents[i] == agent)
+            if (ActiveAgents[i].AgentGO == agent)
             {
                 SetCurrentActiveAgent(i);
                 break;
@@ -198,12 +352,21 @@ public class AgentManager : MonoBehaviour
         if (index < 0 || index > ActiveAgents.Count - 1) return;
         if (ActiveAgents[index] == null) return;
 
-        CurrentActiveAgent = ActiveAgents[index];
-        foreach (var agent in ActiveAgents)
+        CurrentActiveAgent = ActiveAgents[index].AgentGO;
+        CurrentActiveAgentController = CurrentActiveAgent.GetComponent<AgentController>();
+
+        foreach (var config in ActiveAgents)
         {
-            agent.GetComponent<AgentController>().Active = (agent == CurrentActiveAgent);
+            config.AgentGO.GetComponent<AgentController>().Active = (config.AgentGO == CurrentActiveAgent);
         }
         ActiveAgentChanged(CurrentActiveAgent);
+    }
+
+    public void SetNextCurrentActiveAgent()
+    {
+        var index = GetCurrentActiveAgentIndex();
+        index = index < ActiveAgents.Count - 1 ? index + 1 : 0;
+        SetCurrentActiveAgent(index);
     }
 
     public bool GetIsCurrentActiveAgent(GameObject agent)
@@ -216,7 +379,7 @@ public class AgentManager : MonoBehaviour
         int index = 0;
         for (int i = 0; i < ActiveAgents.Count; i++)
         {
-            if (ActiveAgents[i] == CurrentActiveAgent)
+            if (ActiveAgents[i].AgentGO == CurrentActiveAgent)
                 index = i;
         }
         return index;
@@ -232,6 +395,12 @@ public class AgentManager : MonoBehaviour
         AgentChanged?.Invoke(agent);
     }
 
+    private void AgentControllerOnSensorsChanged(AgentController agentController)
+    {
+        if (agentController == CurrentActiveAgentController)
+            ActiveAgentChanged(CurrentActiveAgent);
+    }
+
     public void ResetAgent()
     {
         CurrentActiveAgent?.GetComponent<AgentController>()?.ResetPosition();
@@ -239,7 +408,10 @@ public class AgentManager : MonoBehaviour
 
     public void DestroyAgent(GameObject go)
     {
-        ActiveAgents.RemoveAll(x => x == go);
+        ActiveAgents.RemoveAll(config => config.AgentGO == go);
+        var agentController = go.GetComponent<AgentController>();
+        if (agentController!= null)
+            agentController.SensorsChanged -= AgentControllerOnSensorsChanged;
         Destroy(go);
 
         if (ActiveAgents.Count == 0)
@@ -254,184 +426,13 @@ public class AgentManager : MonoBehaviour
 
     public void Reset()
     {
-        List<GameObject> agents = new List<GameObject>(ActiveAgents);
-        foreach (var agent in agents)
+        List<AgentConfig> configs = new List<AgentConfig>(ActiveAgents);
+        foreach (var config in configs)
         {
-            DestroyAgent(agent);
+            DestroyAgent(config.AgentGO);
         }
 
         ActiveAgents.Clear();
-    }
-
-    static string GetSensorType(SensorBase sensor)
-    {
-        var type = sensor.GetType().GetCustomAttributes(typeof(SensorType), false)[0] as SensorType;
-        return type.Name;
-    }
-
-    public void SetupSensors(GameObject agent, string sensors, BridgeClient bridgeClient)
-    {
-        var available = Simulator.Web.Config.Sensors.ToDictionary(sensor => sensor.Name);
-        var prefabs = RuntimeSettings.Instance.SensorPrefabs.ToDictionary(sensor => GetSensorType(sensor));
-
-        var parents = new Dictionary<string, GameObject>()
-        {
-            { string.Empty, agent },
-        };
-
-        var requested = JSONNode.Parse(sensors).Children.ToList();
-        while (requested.Count != 0)
-        {
-            int requestedCount = requested.Count;
-
-            foreach (var parent in parents.Keys.ToArray())
-            { 
-                var parentObject = parents[parent];
-
-                for (int i = 0; i < requested.Count; i++)
-                {
-                    var item = requested[i];
-                    if (item["parent"].Value == parent)
-                    {
-                        var name = item["name"].Value;
-                        var type = item["type"].Value;
-
-                        SensorConfig config;
-                        if (!available.TryGetValue(type, out config))
-                        {
-                            throw new Exception($"Unknown sensor type {type} for {gameObject.name} vehicle");
-                        }
-
-                        var sensor = CreateSensor(agent, parentObject, prefabs[type].gameObject, item);
-                        sensor.GetComponent<SensorBase>().Name = name;
-                        sensor.name = name;
-                        SIM.LogSimulation(SIM.Simulation.SensorStart, name);
-                        if (bridgeClient != null)
-                        {
-                            sensor.GetComponent<SensorBase>().OnBridgeSetup(bridgeClient.Bridge);
-                        }
-
-                        parents.Add(name, sensor);
-                        requested.RemoveAt(i);
-                        i--;
-                    }
-                }
-            }
-
-            if (requestedCount == requested.Count)
-            {
-                throw new Exception($"Failed to create {requested.Count} sensor(s), cannot determine parent-child relationship");
-            }
-        }
-    }
-
-    GameObject CreateSensor(GameObject agent, GameObject parent, GameObject prefab, JSONNode item)
-    {
-        Vector3 position;
-        Quaternion rotation;
-
-        var transform = item["transform"];
-        if (transform == null)
-        {
-            position = parent.transform.position;
-            rotation = parent.transform.rotation;
-        }
-        else
-        {
-            position = parent.transform.TransformPoint(transform.ReadVector3());
-            rotation = parent.transform.rotation * Quaternion.Euler(transform.ReadVector3("pitch", "yaw", "roll"));
-        }
-
-        var sensor = Instantiate(prefab, position, rotation, agent.transform);
-
-        var sb = sensor.GetComponent<SensorBase>();
-        var sbType = sb.GetType();
-
-        foreach (var param in item["params"])
-        {
-            var key = param.Key;
-            var value = param.Value;
-
-            var field = sbType.GetField(key);
-            if (field == null)
-            {
-                throw new Exception($"Unknown {key} parameter for {item["name"].Value} sensor on {gameObject.name} vehicle");
-            }
-
-            if (field.FieldType.IsEnum)
-            {
-                try
-                {
-                    var obj = Enum.Parse(field.FieldType, value.Value);
-                    field.SetValue(sb, obj);
-                }
-                catch (ArgumentException ex)
-                {
-                    throw new Exception($"Failed to set {key} field to {value.Value} enum value for {gameObject.name} vehicle, {sb.Name} sensor", ex);
-                }
-            }
-            else if (field.FieldType == typeof(Color))
-            {
-                if (ColorUtility.TryParseHtmlString(value.Value, out var color))
-                {
-                    field.SetValue(sb, color);
-                }
-                else
-                {
-                    throw new Exception($"Failed to set {key} field to {value.Value} color for {gameObject.name} vehicle, {sb.Name} sensor");
-                }
-            }
-            else if (field.FieldType == typeof(bool))
-            {
-                field.SetValue(sb, value.AsBool);
-            }
-            else if (field.FieldType == typeof(int))
-            {
-                field.SetValue(sb, value.AsInt);
-            }
-            else if (field.FieldType == typeof(float))
-            {
-                field.SetValue(sb, value.AsFloat);
-            }
-            else if (field.FieldType == typeof(string))
-            {
-                field.SetValue(sb, value.Value);
-            }
-            else if (field.FieldType.IsGenericType && field.FieldType.GetGenericTypeDefinition() == typeof(List<>))
-            {
-                var type = field.FieldType.GetGenericArguments()[0];
-                Type listType = typeof(List<>).MakeGenericType(new[] { type });
-                System.Collections.IList list = (System.Collections.IList)Activator.CreateInstance(listType);
-
-                foreach(var elemValue in value)
-                {
-                    var elem = Activator.CreateInstance(type);
-
-                    foreach (var elemField in type.GetFields())
-                    {
-                        var name = elemField.Name;
-
-                        if (elemValue.Value[name].IsNumber)
-                        {
-                            elemField.SetValue(elem, elemValue.Value[name].AsFloat);
-                        }
-                        else if (elemValue.Value[name].IsString)
-                        {
-                            elemField.SetValue(elem, elemValue.Value[name].Value);
-                        }
-                    }
-                    list.Add(elem);
-                }
-
-                field.SetValue(sb, list);
-            }
-            else
-            {
-                throw new Exception($"Unknown {field.FieldType} type for {key} field for {gameObject.name} vehicle, {sb.Name} sensor");
-            }
-        }
-
-        return sensor;
     }
 
     private void CreateAgentsFromConfigs(AgentConfig[] agentConfigs)
@@ -472,5 +473,14 @@ public class AgentManager : MonoBehaviour
 
             positions[current % count] += Vector3.up * bounds.size.y;
         }
+    }
+
+    static byte[] GetFile(ZipFile zip, string entryName)
+    {
+        var entry = zip.GetEntry(entryName);
+        int streamSize = (int)entry.Size;
+        byte[] buffer = new byte[streamSize];
+        zip.GetInputStream(entry).Read(buffer, 0, streamSize);
+        return buffer;
     }
 }

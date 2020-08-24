@@ -11,14 +11,20 @@ using UnityEngine;
 
 namespace Simulator.Map
 {
-    public class MapParkingSpace : MapDataPoints
+    public class MapParkingSpace : MapDataPoints, IMapType
     {
+        public string id
+        {
+            get;
+            set;
+        }
+
         public override void Draw()
         {
             if (mapLocalPositions.Count < 2) return;
 
-            AnnotationGizmos.DrawWaypoints(transform, mapLocalPositions, MapAnnotationTool.PROXIMITY * 0.5f, parkingSpaceColor);
-            AnnotationGizmos.DrawLines(transform, mapLocalPositions, parkingSpaceColor);
+            AnnotationGizmos.DrawWaypoints(transform, mapLocalPositions, MapAnnotationTool.PROXIMITY * 0.5f, parkingSpaceColor + selectedColor);
+            AnnotationGizmos.DrawLines(transform, mapLocalPositions, parkingSpaceColor + selectedColor);
             if (MapAnnotationTool.SHOW_HELP)
             {
 #if UNITY_EDITOR

@@ -8,7 +8,9 @@
         "Simulator.Bridge",
         "Simulator.Bridge.Ros",
         "Simulator.Bridge.Cyber",
-        "Simulator.Plugins"
+        "Simulator.Plugins",
+        "Simulator.Network.Core",
+        "Unity.Mathematics"
     ],
     "optionalUnityReferences": [],
     "includePlatforms": [],

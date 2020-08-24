@@ -19,12 +19,12 @@ namespace Simulator.Api.Commands
         {
             var uid = args["uid"].Value;
             var waypoints = args["waypoints"].AsArray;
-            var loop = args["loop"].AsBool;
+            var loop = args["loop"];
             var api = ApiManager.Instance;
 
             if (waypoints.Count == 0)
             {
-                api.SendError($"Waypoint list is empty");
+                api.SendError(this, $"Waypoint list is empty");
                 return;
             }
             
@@ -33,31 +33,37 @@ namespace Simulator.Api.Commands
                 var npc = obj.GetComponent<NPCController>();
                 if (npc == null)
                 {
-                    api.SendError( $"Agent '{uid}' is not a NPC agent");
+                    api.SendError(this, $"Agent '{uid}' is not a NPC agent");
                     return;
                 }
 
                 var wp = new List<DriveWaypoint>();
                 for (int i=0; i< waypoints.Count; i++)
                 {
+                    var deactivate = waypoints[i]["deactivate"];
+                    var ts = waypoints[i]["timestamp"];
+
                     wp.Add(new DriveWaypoint()
                     {
                         Position = waypoints[i]["position"].ReadVector3(),
                         Speed = waypoints[i]["speed"].AsFloat,
                         Angle = waypoints[i]["angle"].ReadVector3(),
                         Idle = waypoints[i]["idle"].AsFloat,
-                        Deactivate = waypoints[i]["deactivate"].AsBool,
-                        TriggerDistance = waypoints[i]["trigger_distance"].AsFloat
-                    });
+                        Deactivate = deactivate.IsBoolean ? deactivate.AsBool : false,
+                        TriggerDistance = waypoints[i]["trigger_distance"].AsFloat,
+                        TimeStamp = (ts == null) ? -1 : waypoints[i]["timestamp"].AsFloat
+                    }); ;
                 }
 
-                npc.SetFollowWaypoints(wp, loop);
-                api.SendResult();
+                var loopValue = loop.IsBoolean ? loop.AsBool : false;
+                var waypointFollow = npc.SetBehaviour<NPCWaypointBehaviour>();
+                waypointFollow.SetFollowWaypoints(wp, loop); // TODO use NPCController to init waypoint data
+                api.SendResult(this);
                 SIM.LogAPI(SIM.API.FollowWaypoints, "NPC");
             }
             else
             {
-                api.SendError($"Agent '{uid}' not found");
+                api.SendError(this, $"Agent '{uid}' not found");
             }
         }
     }

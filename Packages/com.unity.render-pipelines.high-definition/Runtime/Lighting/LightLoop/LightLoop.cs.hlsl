@@ -5,7 +5,7 @@
 #ifndef LIGHTLOOP_CS_HLSL
 #define LIGHTLOOP_CS_HLSL
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.LightVolumeType:  static fields
+// UnityEngine.Rendering.HighDefinition.LightVolumeType:  static fields
 //
 #define LIGHTVOLUMETYPE_CONE (0)
 #define LIGHTVOLUMETYPE_SPHERE (1)
@@ -13,7 +13,7 @@
 #define LIGHTVOLUMETYPE_COUNT (3)
 
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.LightCategory:  static fields
+// UnityEngine.Rendering.HighDefinition.LightCategory:  static fields
 //
 #define LIGHTCATEGORY_PUNCTUAL (0)
 #define LIGHTCATEGORY_AREA (1)
@@ -23,7 +23,7 @@
 #define LIGHTCATEGORY_COUNT (5)
 
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.LightFeatureFlags:  static fields
+// UnityEngine.Rendering.HighDefinition.LightFeatureFlags:  static fields
 //
 #define LIGHTFEATUREFLAGS_PUNCTUAL (4096)
 #define LIGHTFEATUREFLAGS_AREA (8192)
@@ -34,7 +34,7 @@
 #define LIGHTFEATUREFLAGS_SSREFLECTION (262144)
 
 //
-// UnityEngine.Experimental.Rendering.HDPipeline.LightDefinitions:  static fields
+// UnityEngine.Rendering.HighDefinition.LightDefinitions:  static fields
 //
 #define MAX_NR_BIG_TILE_LIGHTS_PLUS_ONE (512)
 #define VIEWPORT_SCALE_Z (1)
@@ -47,12 +47,18 @@
 #define TILE_INDEX_SHIFT_Y (15)
 #define TILE_INDEX_SHIFT_EYE (30)
 #define NUM_FEATURE_VARIANTS (29)
+#define LIGHT_LIST_MAX_COARSE_ENTRIES (64)
+#define LIGHT_LIST_MAX_PRUNED_ENTRIES (24)
+#define LIGHT_CLUSTER_MAX_COARSE_ENTRIES (128)
 #define LIGHT_FEATURE_MASK_FLAGS (16773120)
 #define LIGHT_FEATURE_MASK_FLAGS_OPAQUE (16642048)
 #define LIGHT_FEATURE_MASK_FLAGS_TRANSPARENT (16510976)
 #define MATERIAL_FEATURE_MASK_FLAGS (4095)
+#define SCREEN_SPACE_COLOR_SHADOW_FLAG (256)
+#define INVALID_SCREEN_SPACE_SHADOW (255)
+#define SCREEN_SPACE_SHADOW_INDEX_MASK (255)
 
-// Generated from UnityEngine.Experimental.Rendering.HDPipeline.SFiniteLightBound
+// Generated from UnityEngine.Rendering.HighDefinition.SFiniteLightBound
 // PackingRules = Exact
 struct SFiniteLightBound
 {
@@ -64,7 +70,7 @@ struct SFiniteLightBound
     float radius;
 };
 
-// Generated from UnityEngine.Experimental.Rendering.HDPipeline.LightVolumeData
+// Generated from UnityEngine.Rendering.HighDefinition.LightVolumeData
 // PackingRules = Exact
 struct LightVolumeData
 {
@@ -83,7 +89,7 @@ struct LightVolumeData
 };
 
 //
-// Accessors for UnityEngine.Experimental.Rendering.HDPipeline.SFiniteLightBound
+// Accessors for UnityEngine.Rendering.HighDefinition.SFiniteLightBound
 //
 float3 GetBoxAxisX(SFiniteLightBound value)
 {
@@ -110,7 +116,7 @@ float GetRadius(SFiniteLightBound value)
     return value.radius;
 }
 //
-// Accessors for UnityEngine.Experimental.Rendering.HDPipeline.LightVolumeData
+// Accessors for UnityEngine.Rendering.HighDefinition.LightVolumeData
 //
 float3 GetLightPos(LightVolumeData value)
 {

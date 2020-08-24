@@ -6,9 +6,10 @@ using UnityEditor.Graphing.Util;
 using UnityEditor.ShaderGraph;
 using UnityEditor.ShaderGraph.Drawing;
 using UnityEditor.ShaderGraph.Drawing.Controls;
-using UnityEngine.Experimental.Rendering.HDPipeline;
+using UnityEngine.Rendering.HighDefinition;
+using UnityEngine.Rendering;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
+namespace UnityEditor.Rendering.HighDefinition.Drawing
 {
     class FabricSettingsView : VisualElement
     {
@@ -63,15 +64,6 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                     });
                 });
 
-                ps.Add(new PropertyRow(CreateLabel("Back Then Front Rendering", indentLevel)), (row) =>
-                {
-                    row.Add(new Toggle(), (toggle) =>
-                    {
-                        toggle.value = m_Node.backThenFrontRendering.isOn;
-                        toggle.OnToggleChanged(ChangeBackThenFrontRendering);
-                    });
-                });
-
                 m_SortPiorityField = new IntegerField();
                 ps.Add(new PropertyRow(CreateLabel("Sort Priority", indentLevel)), (row) =>
                 {
@@ -81,6 +73,37 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                         field.RegisterValueChangedCallback(ChangeSortPriority);
                     });
                 });
+
+                ps.Add(new PropertyRow(CreateLabel("Depth Write", indentLevel)), (row) =>
+                {
+                    row.Add(new Toggle(), (toggle) =>
+                    {
+                        toggle.value = m_Node.zWrite.isOn;
+                        toggle.OnToggleChanged(ChangeZWrite);
+                    });
+                });
+
+                if (m_Node.doubleSidedMode == DoubleSidedMode.Disabled)
+                {
+                    ps.Add(new PropertyRow(CreateLabel("Cull Mode", indentLevel)), (row) =>
+                    {
+                        row.Add(new EnumField(m_Node.transparentCullMode), (e) =>
+                        {
+                            e.value = m_Node.transparentCullMode;
+                            e.RegisterValueChangedCallback(ChangeTransparentCullMode);
+                        });
+                    });
+                }
+
+                ps.Add(new PropertyRow(CreateLabel("Depth Test", indentLevel)), (row) =>
+                {
+                    row.Add(new EnumField(m_Node.zTest), (e) =>
+                    {
+                        e.value = m_Node.zTest;
+                        e.RegisterValueChangedCallback(ChangeZTest);
+                    });
+                });
+
                 --indentLevel;
             }
 
@@ -92,29 +115,6 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                     toggle.OnToggleChanged(ChangeAlphaTest);
                 });
             });
-
-            if (m_Node.surfaceType == SurfaceType.Transparent && m_Node.alphaTest.isOn)
-            {
-                ++indentLevel;
-                ps.Add(new PropertyRow(CreateLabel("Alpha Cutoff Depth Prepass", indentLevel)), (row) =>
-                {
-                    row.Add(new Toggle(), (toggle) =>
-                    {
-                        toggle.value = m_Node.alphaTestDepthPrepass.isOn;
-                        toggle.OnToggleChanged(ChangeAlphaTestPrepass);
-                    });
-                });
-
-                ps.Add(new PropertyRow(CreateLabel("Alpha Cutoff Depth Postpass", indentLevel)), (row) =>
-                {
-                    row.Add(new Toggle(), (toggle) =>
-                    {
-                        toggle.value = m_Node.alphaTestDepthPostpass.isOn;
-                        toggle.OnToggleChanged(ChangeAlphaTestPostpass);
-                    });
-                });
-                --indentLevel;
-            }
 
             ps.Add(new PropertyRow(CreateLabel("Double-Sided", indentLevel)), (row) =>
             {
@@ -182,6 +182,15 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                 });
             });
 
+            ps.Add(new PropertyRow(CreateLabel("Add Precomputed Velocity", indentLevel)), (row) =>
+            {
+                row.Add(new Toggle(), (toggle) =>
+                {
+                    toggle.value = m_Node.addPrecomputedVelocity.isOn;
+                    toggle.OnToggleChanged(ChangeAddPrecomputedVelocity);
+                });
+            });
+
             ps.Add(new PropertyRow(CreateLabel("Specular Occlusion Mode", indentLevel)), (row) =>
             {
                 row.Add(new EnumField(SpecularOcclusionMode.Off), (field) =>
@@ -206,6 +215,15 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                 {
                     toggle.value = m_Node.depthOffset.isOn;
                     toggle.OnToggleChanged(ChangeDepthOffset);
+                });
+            });
+
+            ps.Add(new PropertyRow(CreateLabel("Support LOD CrossFade", indentLevel)), (row) =>
+            {
+                row.Add(new Toggle(), (toggle) =>
+                {
+                    toggle.value = m_Node.supportLodCrossFade.isOn;
+                    toggle.OnToggleChanged(ChangeSupportLODCrossFade);
                 });
             });
 
@@ -283,14 +301,6 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
             m_Node.transparencyFog = td;
         }
 
-        void ChangeBackThenFrontRendering(ChangeEvent<bool> evt)
-        {
-            m_Node.owner.owner.RegisterCompleteObjectUndo("Back Then Front Rendering Change");
-            ToggleData td = m_Node.backThenFrontRendering;
-            td.isOn = evt.newValue;
-            m_Node.backThenFrontRendering = td;
-        }
-
         void ChangeSortPriority(ChangeEvent<int> evt)
         {
             m_Node.sortPriority = HDRenderQueue.ClampsTransparentRangePriority(evt.newValue);
@@ -302,28 +312,20 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
             m_Node.owner.owner.RegisterCompleteObjectUndo("Sort Priority Change");
         }
 
+        void ChangeZWrite(ChangeEvent<bool> evt)
+        {
+            m_Node.owner.owner.RegisterCompleteObjectUndo("ZWrite Change");
+            ToggleData td = m_Node.zWrite;
+            td.isOn = evt.newValue;
+            m_Node.zWrite = td;
+        }
+
         void ChangeAlphaTest(ChangeEvent<bool> evt)
         {
             m_Node.owner.owner.RegisterCompleteObjectUndo("Alpha Test Change");
             ToggleData td = m_Node.alphaTest;
             td.isOn = evt.newValue;
             m_Node.alphaTest = td;
-        }
-
-        void ChangeAlphaTestPrepass(ChangeEvent<bool> evt)
-        {
-            m_Node.owner.owner.RegisterCompleteObjectUndo("Alpha Test Depth Prepass Change");
-            ToggleData td = m_Node.alphaTestDepthPrepass;
-            td.isOn = evt.newValue;
-            m_Node.alphaTestDepthPrepass = td;
-        }
-
-        void ChangeAlphaTestPostpass(ChangeEvent<bool> evt)
-        {
-            m_Node.owner.owner.RegisterCompleteObjectUndo("Alpha Test Depth Postpass Change");
-            ToggleData td = m_Node.alphaTestDepthPostpass;
-            td.isOn = evt.newValue;
-            m_Node.alphaTestDepthPostpass = td;
         }
 
         void ChangeDecal(ChangeEvent<bool> evt)
@@ -340,6 +342,14 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
             ToggleData td = m_Node.receiveSSR;
             td.isOn = evt.newValue;
             m_Node.receiveSSR = td;
+        }
+
+        void ChangeAddPrecomputedVelocity(ChangeEvent<bool> evt)
+        {
+            m_Node.owner.owner.RegisterCompleteObjectUndo("Add Precomputed Velocity");
+            ToggleData td = m_Node.addPrecomputedVelocity;
+            td.isOn = evt.newValue;
+            m_Node.addPrecomputedVelocity = td;
         }
 
         void ChangeEnergyConservingSpecular(ChangeEvent<bool> evt)
@@ -373,6 +383,32 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
             ToggleData td = m_Node.depthOffset;
             td.isOn = evt.newValue;
             m_Node.depthOffset = td;
+        }
+
+        void ChangeTransparentCullMode(ChangeEvent<Enum> evt)
+        {
+            if (Equals(m_Node.transparentCullMode, evt.newValue))
+                return;
+
+            m_Node.owner.owner.RegisterCompleteObjectUndo("Transparent Cull Mode Change");
+            m_Node.transparentCullMode = (TransparentCullMode)evt.newValue;
+        }
+
+        void ChangeZTest(ChangeEvent<Enum> evt)
+        {
+            if (Equals(m_Node.zTest, evt.newValue))
+                return;
+
+            m_Node.owner.owner.RegisterCompleteObjectUndo("ZTest Change");
+            m_Node.zTest = (CompareFunction)evt.newValue;
+        }
+
+        void ChangeSupportLODCrossFade(ChangeEvent<bool> evt)
+        {
+            m_Node.owner.owner.RegisterCompleteObjectUndo("Support LOD CrossFade Change");
+            ToggleData td = m_Node.supportLodCrossFade;
+            td.isOn = evt.newValue;
+            m_Node.supportLodCrossFade = td;
         }
 
         public AlphaMode GetAlphaMode(FabricMasterNode.AlphaModeFabric alphaModeLit)

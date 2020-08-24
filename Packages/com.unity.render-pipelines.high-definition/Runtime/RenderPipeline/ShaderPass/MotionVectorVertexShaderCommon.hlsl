@@ -5,6 +5,9 @@
 struct AttributesPass
 {
     float3 previousPositionOS : TEXCOORD4; // Contain previous transform position (in case of skinning for example)
+#if defined (_ADD_PRECOMPUTED_VELOCITY)
+    float3 precomputedVelocity    : TEXCOORD5; // Add Precomputed Velocity (Alembic computes velocities on runtime side).
+#endif
 };
 
 struct VaryingsPassToPS
@@ -73,24 +76,6 @@ VaryingsPassToDS InterpolateWithBaryCoordsPassToDS(VaryingsPassToDS input0, Vary
 #define VARYINGS_NEED_PASS
 #include "Packages/com.unity.render-pipelines.high-definition/Runtime/RenderPipeline/ShaderPass/VertMesh.hlsl"
 
-// Transforms normal from object to world space
-float3 TransformPreviousObjectToWorldNormal(float3 normalOS)
-{
-#ifdef UNITY_ASSUME_UNIFORM_SCALING
-    return normalize(mul((float3x3)unity_MatrixPreviousM, normalOS));
-#else
-    // Normal need to be multiply by inverse transpose
-    return normalize(mul(normalOS, (float3x3)unity_MatrixPreviousMI));
-#endif
-}
-
-// Transforms local position to camera relative world space
-float3 TransformPreviousObjectToWorld(float3 positionOS)
-{
-    float4x4 previousModelMatrix = ApplyCameraTranslationToMatrix(unity_MatrixPreviousM);
-    return mul(previousModelMatrix, float4(positionOS, 1.0)).xyz;
-}
-
 void MotionVectorPositionZBias(VaryingsToPS input)
 {
 #if defined(UNITY_REVERSED_Z)
@@ -110,7 +95,7 @@ PackedVaryingsType MotionVectorVS(inout VaryingsType varyingsType, AttributesMes
     // It is not possible to correctly generate the motion vector for tesselated geometry as tessellation parameters can change
     // from one frame to another (adaptative, lod) + in Unity we only receive information for one non tesselated vertex.
     // So motion vetor will be based on interpolate previous position at vertex level instead.
-    varyingsType.vpass.positionCS = mul(_NonJitteredViewProjMatrix, float4(varyingsType.vmesh.positionRWS, 1.0));
+    varyingsType.vpass.positionCS = mul(UNITY_MATRIX_UNJITTERED_VP, float4(varyingsType.vmesh.positionRWS, 1.0));
 
     // Note: unity_MotionVectorsParams.y is 0 is forceNoMotion is enabled
     bool forceNoMotion = unity_MotionVectorsParams.y == 0.0;
@@ -122,15 +107,20 @@ PackedVaryingsType MotionVectorVS(inout VaryingsType varyingsType, AttributesMes
     {
         bool hasDeformation = unity_MotionVectorsParams.x > 0.0; // Skin or morph target
 
+        float3 effectivePositionOS = (hasDeformation ? inputPass.previousPositionOS : inputMesh.positionOS);
+#if defined(_ADD_PRECOMPUTED_VELOCITY)
+        effectivePositionOS -= inputPass.precomputedVelocity;
+#endif
+
     // Need to apply any vertex animation to the previous worldspace position, if we want it to show up in the motion vector buffer
 #if defined(HAVE_MESH_MODIFICATION)
         AttributesMesh previousMesh = inputMesh;
-        if (hasDeformation)
-            previousMesh.positionOS = inputPass.previousPositionOS;
-        previousMesh = ApplyMeshModification(previousMesh);
+        previousMesh.positionOS = effectivePositionOS ;
+
+        previousMesh = ApplyMeshModification(previousMesh, _LastTimeParameters.xyz);
         float3 previousPositionRWS = TransformPreviousObjectToWorld(previousMesh.positionOS);
 #else
-        float3 previousPositionRWS = TransformPreviousObjectToWorld(hasDeformation ? inputPass.previousPositionOS : inputMesh.positionOS);
+        float3 previousPositionRWS = TransformPreviousObjectToWorld(effectivePositionOS);
 #endif
 
 #ifdef ATTRIBUTES_NEED_NORMAL
@@ -140,10 +130,10 @@ PackedVaryingsType MotionVectorVS(inout VaryingsType varyingsType, AttributesMes
 #endif
 
 #if defined(HAVE_VERTEX_MODIFICATION)
-        ApplyVertexModification(inputMesh, normalWS, previousPositionRWS, _LastTime);
+        ApplyVertexModification(inputMesh, normalWS, previousPositionRWS, _LastTimeParameters.xyz);
 #endif
 
-        varyingsType.vpass.previousPositionCS = mul(_PrevViewProjMatrix, float4(previousPositionRWS, 1.0));
+        varyingsType.vpass.previousPositionCS = mul(UNITY_MATRIX_PREV_VP, float4(previousPositionRWS, 1.0));
     }
 
     return PackVaryingsType(varyingsType);

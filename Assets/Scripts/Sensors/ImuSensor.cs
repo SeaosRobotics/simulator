@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2019 LG Electronics, Inc.
+ * Copyright (c) 2019-2020 LG Electronics, Inc.
  *
  * This software contains code licensed as described in LICENSE.
  *
@@ -43,6 +43,10 @@ namespace Simulator.Sensors
 
         Rigidbody RigidBody;
         Vector3 LastVelocity;
+
+        ImuData data;
+        
+        public override SensorDistributionType DistributionType => SensorDistributionType.HighLoad;
 
         public override void OnBridgeSetup(IBridge bridge)
         {
@@ -104,11 +108,6 @@ namespace Simulator.Sensors
 
         void FixedUpdate()
         {
-            if (Bridge == null || Bridge.Status != Status.Connected)
-            {
-                return;
-            }
-
             if (IsFirstFixedUpdate)
             {
                 lock (MessageQueue)
@@ -124,21 +123,23 @@ namespace Simulator.Sensors
                 return;
             }
 
+            var position = transform.position;
+            position.Set(position.z, -position.x, position.y);
             var velocity = transform.InverseTransformDirection(RigidBody.velocity);
+            velocity.Set(velocity.z, -velocity.x, velocity.y);
             var acceleration = (velocity - LastVelocity) / Time.fixedDeltaTime;
             LastVelocity = velocity;
 
-            acceleration += transform.InverseTransformDirection(Physics.gravity);
+            var localGravity = transform.InverseTransformDirection(Physics.gravity);
+            acceleration -= new Vector3(localGravity.z, -localGravity.x, localGravity.y);
 
             var angularVelocity = RigidBody.angularVelocity;
+            angularVelocity.Set(-angularVelocity.z, angularVelocity.x, -angularVelocity.y); // converting to right handed xyz
 
-            var angles = transform.eulerAngles;
-            float roll = -angles.z;
-            float pitch = -angles.x;
-            float yaw = -angles.y;
-            var orientation = Quaternion.Euler(roll, pitch, yaw);
+            var orientation = transform.rotation;
+            orientation.Set(-orientation.z, orientation.x, -orientation.y, orientation.w); // converting to right handed xyz
 
-            var data = new ImuData()
+            data = new ImuData()
             {
                 Name = Name,
                 Frame = Frame,
@@ -147,7 +148,7 @@ namespace Simulator.Sensors
 
                 MeasurementSpan = Time.fixedDeltaTime,
 
-                Position = transform.position,
+                Position = position,
                 Orientation = orientation,
 
                 Acceleration = acceleration,
@@ -164,14 +165,19 @@ namespace Simulator.Sensors
 
                 MeasurementSpan = Time.fixedDeltaTime,
 
-                Position = transform.position,
+                Position = position,
                 Orientation = orientation,
 
                 Acceleration = acceleration,
                 LinearVelocity = velocity,
                 AngularVelocity = angularVelocity,
             };
-            
+
+            if (Bridge == null || Bridge.Status != Status.Connected)
+            {
+                return;
+            }
+
             lock (MessageQueue)
             {
                 MessageQueue.Enqueue(Tuple.Create(time, Time.fixedDeltaTime, (Action)(() => {
@@ -193,7 +199,23 @@ namespace Simulator.Sensors
 
         public override void OnVisualize(Visualizer visualizer)
         {
-            //
+            UnityEngine.Debug.Assert(visualizer != null);
+
+            if (data == null)
+            {
+                return;
+            }
+
+            var graphData = new Dictionary<string, object>()
+            {
+                {"Measurement Span", data.MeasurementSpan},
+                {"Position", data.Position},
+                {"Orientation", data.Orientation},
+                {"Acceleration", data.Acceleration},
+                {"Linear Velocity", data.LinearVelocity},
+                {"Angular Velocity", data.AngularVelocity}
+            };
+            visualizer.UpdateGraphValues(graphData);
         }
 
         public override void OnVisualizeToggle(bool state)

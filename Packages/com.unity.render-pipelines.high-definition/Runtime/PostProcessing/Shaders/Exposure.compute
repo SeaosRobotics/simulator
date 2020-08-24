@@ -121,8 +121,8 @@ void KManualCameraExposure(uint2 dispatchThreadId : SV_DispatchThreadID)
 [numthreads(8,8,1)]
 void KPrePass(uint2 dispatchThreadId : SV_DispatchThreadID)
 {
-    // XRTODO: experiment sampling all eyes with interleaving instead of reading just the first eye
-    UNITY_STEREO_ASSIGN_COMPUTE_EYE_INDEX(0);
+    // For XR, interleave single-pass views in a checkerboard pattern
+    UNITY_XR_ASSIGN_VIEW_INDEX((dispatchThreadId.x + dispatchThreadId.y) % _XRViewCount)
 
     PositionInputs posInputs = GetPositionInput(float2(dispatchThreadId), 1.0 / 1024.0, uint2(8u, 8u));
     float2 uv = ClampAndScaleUVForBilinear(posInputs.positionNDC);
@@ -200,6 +200,9 @@ void KReduction(uint2 groupId : SV_GroupID, uint2 groupThreadId : SV_GroupThread
     if(threadIdx == 0u)
     {
         float avgLuminance = dot(gs_luminances[0], 0.25);
+
+        if (IsNaN(avgLuminance) || IsInf(avgLuminance))
+            avgLuminance = 1.0;
 
         if (gs_weights[0] > 0.0)
             avgLuminance /= (gs_weights[0] * 0.25);

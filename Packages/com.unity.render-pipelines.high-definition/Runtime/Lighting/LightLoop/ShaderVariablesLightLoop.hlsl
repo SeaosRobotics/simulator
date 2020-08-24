@@ -21,24 +21,22 @@
     StructuredBuffer<EnvLightData>         _EnvLightDatas;
 
     // Used by directional and spot lights
-    TEXTURE2D_ARRAY(_CookieTextures);
-    // Used by area lights
-    TEXTURE2D_ARRAY(_AreaCookieTextures);
+    TEXTURE2D(_CookieAtlas);
 
     // Used by point lights
     TEXTURECUBE_ARRAY_ABSTRACT(_CookieCubeTextures);
 
     // Use texture array for reflection (or LatLong 2D array for mobile)
     TEXTURECUBE_ARRAY_ABSTRACT(_EnvCubemapTextures);
-    TEXTURE2D_ARRAY(_Env2DTextures);
+    TEXTURE2D(_Env2DTextures);
 
     // Contact shadows
-    TEXTURE2D_X(_DeferredShadowTexture);
+    TEXTURE2D_X_UINT(_ContactShadowTexture);
 
-#if SHADEROPTIONS_RAYTRACING
-    // Area shadow paper texture
-    TEXTURE2D_ARRAY(_AreaShadowTexture);
+    // Screen space shadows
+    TEXTURE2D_ARRAY(_ScreenSpaceShadowsTexture);
 
+#if RAYTRACING_ENABLED
     // Indirect Diffuse Texture
     TEXTURE2D_X(_IndirectDiffuseTexture);
 #endif

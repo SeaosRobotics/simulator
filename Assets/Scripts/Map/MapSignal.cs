@@ -12,11 +12,17 @@ using UnityEngine;
 using System.Linq;
 using Simulator.Utilities;
 using Simulator.Controllable;
+using System.Net;
+using Simulator.Network.Core.Connection;
+using Simulator.Network.Core.Messaging;
+using Simulator.Network.Core.Messaging.Data;
 
 namespace Simulator.Map
 {
-    public class MapSignal : MapData, IControllable
+    public class MapSignal : MapData, IControllable, IMapType
     {
+        public bool Spawned { get; set; } = false;
+        public string UID { get; set; }
         public uint ID;
         public Vector3 boundOffsets = new Vector3();
         public Vector3 boundScale = new Vector3();
@@ -25,12 +31,17 @@ namespace Simulator.Map
         public Renderer signalLightMesh;
         public SignalType signalType = SignalType.MIX_3_VERTICAL;
         private Coroutine SignalCoroutine;
+        private MessagesManager messagesManager;
+        public string id { get; set; }
 
+        public string Key => UID;
+
+        public string GUID => UID;
         public string ControlType { get; set; } = "signal";
         public string CurrentState { get; set; }
         public string[] ValidStates { get; set; } = new string[] { "green", "yellow", "red", "black" };
         public string[] ValidActions { get; set; } = new string[] { "trigger", "wait", "loop" };
-        public string DefaultControlPolicy { get; set; }
+        public string DefaultControlPolicy { get; set; } = "";
         public string CurrentControlPolicy { get; set; }
 
         public void Control(List<ControlAction> controlActions)
@@ -49,6 +60,13 @@ namespace Simulator.Map
         private void OnDestroy()
         {
             Resources.UnloadUnusedAssets();
+        }
+
+        private IEnumerator WaitForId(Action callback)
+        {
+            while (string.IsNullOrEmpty(id))
+                yield return null;
+            callback();
         }
 
         public void SetSignalMeshData()
@@ -98,26 +116,22 @@ namespace Simulator.Map
             {
                 case "red":
                     stopLine.currentState = SignalLightStateType.Red;
-                    signalLightMesh.material.SetTextureOffset("_EmissiveColorMap", new Vector2(0f, 0.65f));
+                    signalLightMesh.material.SetTextureOffset("_EmissiveColorMap", new Vector2(0f, 0.6666f));
                     signalLightMesh.material.SetColor("_EmissiveColor", Color.red);
-                    signalLightMesh.material.SetVector("_EmissiveColor", Color.red * 0.5f);
                     break;
                 case "green":
                     stopLine.currentState = SignalLightStateType.Green;
                     signalLightMesh.material.SetTextureOffset("_EmissiveColorMap", new Vector2(0f, 0f));
                     signalLightMesh.material.SetColor("_EmissiveColor", Color.green);
-                    signalLightMesh.material.SetVector("_EmissiveColor", Color.green * 0.5f);
                     break;
                 case "yellow":
                     stopLine.currentState = SignalLightStateType.Yellow;
-                    signalLightMesh.material.SetTextureOffset("_EmissiveColorMap", new Vector2(0f, 0.35f));
+                    signalLightMesh.material.SetTextureOffset("_EmissiveColorMap", new Vector2(0f, 0.3333f));
                     signalLightMesh.material.SetColor("_EmissiveColor", Color.yellow);
-                    signalLightMesh.material.SetVector("_EmissiveColor", Color.yellow * 0.5f);
                     break;
                 case "black":
                     stopLine.currentState = SignalLightStateType.Black;
                     signalLightMesh.material.SetColor("_EmissiveColor", Color.black);
-                    signalLightMesh.material.SetVector("_EmissiveColor", Color.black * 0.5f);
                     break;
                 default:
                     break;

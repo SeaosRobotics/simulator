@@ -12,14 +12,20 @@ using Simulator.Map;
 
 namespace Simulator.Map
 {
-    public class MapCrossWalk : MapDataPoints
+    public class MapCrossWalk : MapDataPoints, IMapType
     {
+        public string id
+        {
+            get;
+            set;
+        }
         public override void Draw()
         {
             if (mapLocalPositions.Count < 3) return;
 
-            AnnotationGizmos.DrawWaypoints(transform, mapLocalPositions, MapAnnotationTool.PROXIMITY * 0.5f, crossWalkColor);
-            AnnotationGizmos.DrawLines(transform, mapLocalPositions, crossWalkColor);
+            AnnotationGizmos.DrawWaypoints(transform, mapLocalPositions, MapAnnotationTool.PROXIMITY * 0.5f, crossWalkColor + selectedColor);
+            AnnotationGizmos.DrawLines(transform, mapLocalPositions, crossWalkColor + selectedColor);
+
             if (MapAnnotationTool.SHOW_HELP)
             {
 #if UNITY_EDITOR

@@ -9,7 +9,7 @@ using SimpleJSON;
 
 namespace Simulator.Api
 {
-    interface ICommand
+    public interface ICommand
     {
         string Name { get; }
         void Execute(JSONNode args);

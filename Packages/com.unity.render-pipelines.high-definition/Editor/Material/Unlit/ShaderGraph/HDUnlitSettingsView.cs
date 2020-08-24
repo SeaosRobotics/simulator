@@ -6,10 +6,11 @@ using UnityEditor.Graphing.Util;
 using UnityEditor.ShaderGraph;
 using UnityEditor.ShaderGraph.Drawing;
 using UnityEditor.ShaderGraph.Drawing.Controls;
-using UnityEditor.Experimental.Rendering.HDPipeline;
-using UnityEngine.Experimental.Rendering.HDPipeline;
+using UnityEditor.Rendering.HighDefinition;
+using UnityEngine.Rendering.HighDefinition;
+using UnityEngine.Rendering;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
+namespace UnityEditor.Rendering.HighDefinition.Drawing
 {
     class HDUnlitSettingsView : VisualElement
     {
@@ -129,7 +130,7 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                 if (m_Node.distortion.isOn)
                 {
                     ++indentLevel;
-                    ps.Add(new PropertyRow(CreateLabel("Mode", indentLevel)), (row) =>
+                    ps.Add(new PropertyRow(CreateLabel("Distortion Blend Mode", indentLevel)), (row) =>
                     {
                         row.Add(new EnumField(DistortionMode.Add), (field) =>
                         {
@@ -145,7 +146,7 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                             toggle.OnToggleChanged(ChangeDistortionOnly);
                         });
                     });
-                    ps.Add(new PropertyRow(CreateLabel("Depth Test", indentLevel)), (row) =>
+                    ps.Add(new PropertyRow(CreateLabel("Distortion Depth Test", indentLevel)), (row) =>
                     {
                         row.Add(new Toggle(), (toggle) =>
                         {
@@ -155,6 +156,36 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                     });
                     --indentLevel;
                 }
+
+                ps.Add(new PropertyRow(CreateLabel("Depth Write", indentLevel)), (row) =>
+                {
+                    row.Add(new Toggle(), (toggle) =>
+                    {
+                        toggle.value = m_Node.zWrite.isOn;
+                        toggle.OnToggleChanged(ChangeZWrite);
+                    });
+                });
+
+                if (!m_Node.doubleSided.isOn)
+                {
+                    ps.Add(new PropertyRow(CreateLabel("Cull Mode", indentLevel)), (row) =>
+                    {
+                        row.Add(new EnumField(m_Node.transparentCullMode), (e) =>
+                        {
+                            e.value = m_Node.transparentCullMode;
+                            e.RegisterValueChangedCallback(ChangeTransparentCullMode);
+                        });
+                    });
+                }
+
+                ps.Add(new PropertyRow(CreateLabel("Depth Test", indentLevel)), (row) =>
+                {
+                    row.Add(new EnumField(m_Node.zTest), (e) =>
+                    {
+                        e.value = m_Node.zTest;
+                        e.RegisterValueChangedCallback(ChangeZTest);
+                    });
+                });
 
                 --indentLevel;
             }
@@ -174,6 +205,24 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                 {
                     toggle.value = m_Node.alphaTest.isOn;
                     toggle.OnToggleChanged(ChangeAlphaTest);
+                });
+            });
+
+            ps.Add(new PropertyRow(CreateLabel("Add Precomputed Velocity", indentLevel)), (row) =>
+            {
+                row.Add(new Toggle(), (toggle) =>
+                {
+                    toggle.value = m_Node.addPrecomputedVelocity.isOn;
+                    toggle.OnToggleChanged(ChangeAddPrecomputedVelocity);
+                });
+            });
+
+            ps.Add(new PropertyRow(CreateLabel("Shadow Matte", indentLevel)), (row) =>
+            {
+                row.Add(new Toggle(), (toggle) =>
+                {
+                    toggle.value = m_Node.enableShadowMatte.isOn;
+                    toggle.OnToggleChanged(ChangeEnableShadowMatte);
                 });
             });
 
@@ -308,6 +357,48 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
             m_Node.alphaTest = td;
         }
 
+        void ChangeAddPrecomputedVelocity(ChangeEvent<bool> evt)
+        {
+            m_Node.owner.owner.RegisterCompleteObjectUndo("Add Precomputed Velocity");
+            ToggleData td = m_Node.addPrecomputedVelocity;
+            td.isOn = evt.newValue;
+            m_Node.addPrecomputedVelocity = td;
+        }
+
+        void ChangeEnableShadowMatte(ChangeEvent<bool> evt)
+        {
+            m_Node.owner.owner.RegisterCompleteObjectUndo("Shadow Matte");
+            ToggleData td = m_Node.enableShadowMatte;
+            td.isOn = evt.newValue;
+            m_Node.enableShadowMatte = td;
+        }
+
+        void ChangeZWrite(ChangeEvent<bool> evt)
+        {
+            m_Node.owner.owner.RegisterCompleteObjectUndo("ZWrite Change");
+            ToggleData td = m_Node.zWrite;
+            td.isOn = evt.newValue;
+            m_Node.zWrite = td;
+        }
+
+        void ChangeTransparentCullMode(ChangeEvent<Enum> evt)
+        {
+            if (Equals(m_Node.transparentCullMode, evt.newValue))
+                return;
+
+            m_Node.owner.owner.RegisterCompleteObjectUndo("Transparent Cull Mode Change");
+            m_Node.transparentCullMode = (TransparentCullMode)evt.newValue;
+        }
+
+        void ChangeZTest(ChangeEvent<Enum> evt)
+        {
+            if (Equals(m_Node.zTest, evt.newValue))
+                return;
+
+            m_Node.owner.owner.RegisterCompleteObjectUndo("ZTest Change");
+            m_Node.zTest = (CompareFunction)evt.newValue;
+        }
+
         public AlphaMode GetAlphaMode(HDUnlitMasterNode.AlphaModeLit alphaModeLit)
         {
             switch (alphaModeLit)
@@ -323,7 +414,6 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline.Drawing
                         Debug.LogWarning("Not supported: " + alphaModeLit);
                         return AlphaMode.Alpha;
                     }
-
             }
         }
 

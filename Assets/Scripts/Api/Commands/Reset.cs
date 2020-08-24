@@ -6,31 +6,20 @@
  */
 
 using SimpleJSON;
-using UnityEngine;
 using Simulator.Sensors;
+using Simulator.Network.Core.Identification;
 
 namespace Simulator.Api.Commands
 {
-    class Reset : ICommand
+    class Reset : IDistributedCommand
     {
         public string Name => "simulator/reset";
 
         public static void Run()
         {
             var api = ApiManager.Instance;
-            foreach (var kv in api.Agents)
-            {
-                var obj = kv.Value;
-                var sensors = obj.GetComponentsInChildren<SensorBase>();
-
-                foreach (var sensor in sensors)
-                {
-                    var suid = api.SensorUID[sensor];
-                    api.Sensors.Remove(suid);
-                    api.SensorUID.Remove(sensor);
-                }
-            }
-
+            var sim = SimulatorManager.Instance;
+            //sim.AnalysisManager.AnalysisSave();
             api.Reset();
             SIM.LogAPI(SIM.API.SimulationReset);
         }
@@ -38,7 +27,7 @@ namespace Simulator.Api.Commands
         public void Execute(JSONNode args)
         {
             Run();
-            ApiManager.Instance.SendResult();
+            ApiManager.Instance.SendResult(this);
         }
     }
 }

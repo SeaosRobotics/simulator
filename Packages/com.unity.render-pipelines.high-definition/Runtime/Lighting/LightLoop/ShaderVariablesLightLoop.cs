@@ -1,8 +1,7 @@
-
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
     [GenerateHLSL(needAccessors = false, omitStructDeclaration = true)]
-    public unsafe struct ShaderVariablesLightLoop
+    unsafe struct ShaderVariablesLightLoop
     {
         public const int s_MaxEnv2DLight = 32;
 
@@ -17,6 +16,8 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         public fixed float _Env2DCaptureVP[s_MaxEnv2DLight * 4 * 4];
         [HLSLArray(s_MaxEnv2DLight * 3, typeof(float))]
         public fixed float _Env2DCaptureForward[s_MaxEnv2DLight * 3];
+        [HLSLArray(s_MaxEnv2DLight, typeof(Vector4))]
+        public fixed float _Env2DAtlasScaleOffset[s_MaxEnv2DLight * 3];
 
         public uint _DirectionalLightCount;
 
@@ -27,7 +28,14 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         public int  _EnvLightSkyEnabled;         // TODO: make it a bool
         public int _DirectionalShadowIndex;
 
+        public Vector4 _CookieAtlasSize;
+        public Vector4 _CookieAtlasData;
+        
+        public Vector4 _PlanarAtlasData;
+
         public float _MicroShadowOpacity;
+
+        public float _DirectionalTransmissionMultiplier;
 
         public uint _NumTileFtplX;
         public  uint _NumTileFtplY;
@@ -56,10 +64,6 @@ namespace UnityEngine.Experimental.Rendering.HDPipeline
         public int _DebugSingleShadowIndex;
 
         public int _EnvSliceSize;
-        public uint _CookieSizePOT; // Cookie size = 1 << _CookieSizePOT
-
-        // Uniform variables that defines if we shall be using the shadow area texture or not
-        public int _RaytracedAreaShadow;
 
         // Uniform variables that defines if we shall be using the raytraced indirect diffuse
         public int _RaytracedIndirectDiffuse;

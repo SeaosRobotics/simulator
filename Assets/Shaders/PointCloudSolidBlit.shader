@@ -19,11 +19,23 @@ Shader "Simulator/PointCloud/SolidBlit"
 
             #pragma vertex Vert
             #pragma fragment Frag
+
+            #pragma multi_compile _ COLOR_ONLY NORMALS_ONLY DEPTH_ONLY
+
             #include "UnityCG.cginc"
 
             Texture2D _ColorTex;
             SamplerState sampler_ColorTex;
             float4 _ColorTex_TexelSize;
+
+            Texture2D _NormalDepthTex;
+            SamplerState sampler_NormalDepthTex;
+
+            float4x4 _ReprojectionMatrix;
+            float4x4 _InvProjMatrix;
+
+            float _FarPlane;
+            float _SRMul;
 
             Texture2D _MaskTex;
 
@@ -46,10 +58,12 @@ Shader "Simulator/PointCloud/SolidBlit"
                 Output.Position.z = 0;
                 Output.Position.w = 1;
 
+                Output.Position = mul(_ReprojectionMatrix, Output.Position);
+
                 Output.TexCoord.x = (float)(id / 2) * 2;
                 Output.TexCoord.y = (float)(id % 2) * 2;
 
-                Output.TexCoord.xy *= _ColorTex_TexelSize.xy * _ScreenParams.xy / float(1 << _DebugLevel);
+                Output.TexCoord.xy *= _ColorTex_TexelSize.xy * _SRMul * _ScreenParams.xy / float(1 << _DebugLevel);
 
                 return Output;
             }
@@ -62,23 +76,36 @@ Shader "Simulator/PointCloud/SolidBlit"
 
             FragOutput Frag(v2f Input)
             {
-                int2 uv = int2(Input.TexCoord * _ColorTex_TexelSize.zw);
-                float4 pix = _ColorTex.Load(int3(uv, _DebugLevel));
-                if (pix.a <= 0)
-                {
-                    discard;
-                }
+                float2 uv = int2(Input.TexCoord * _ColorTex_TexelSize.zw);
+                float4 col = _ColorTex.Load(float3(uv, _DebugLevel));
+                float4 dnSample = _NormalDepthTex.Load(float3(uv, _DebugLevel));
+                float depth = dnSample.w;
+                // float originalDepth = _OriginalDepthTex.Load(float3(uv, 0));
+                // float4 originalColor = tex2D(_OriginalColorTex, Input.TexCoord);
+                float3 normalPacked = dnSample.rgb;
+                float3 normal = normalPacked * 2 - 1;
 
-                // float z = pix.a;
-                // float4 clip = UnityViewToClipPos(float3(0, 0, -z));
+                #if NORMALS_ONLY
+                    col.rgb = normalPacked;
+                #elif DEPTH_ONLY
+                    col.rgb = float3(depth, depth, depth);
+                #elif !defined(COLOR_ONLY)
+                    // == Debug Lambert lighting
+                    float3 worldNormal = mul(_InvProjMatrix, normal);
+                    float3 lightDir = _WorldSpaceLightPos0.xyz;
+                    fixed diff = max (0, dot (worldNormal, lightDir));
 
-                 //pix.r = _MaskTex.Load(int3(uv, 0)).r == 1 ? 0 : 1;
-                 //pix.g = 0; // pix.a == 0 ? 0 : 1;
-                 //pix.b = 0;
-                 pix.a = 1;
+                    fixed4 lighting;
+                    lighting.rgb = (col * diff);
+                    lighting.a = 1;
+                    col.rgb = col.rgb * 0.3 + lighting * 0.8;
+                    // ==/
+                #endif
+
+                col.a = 1;
 
                 FragOutput Output;
-                Output.Color = pix;
+                Output.Color = col;
                 Output.Depth = 0.5; // TODO clip.z / clip.w;
                 return Output;
             }

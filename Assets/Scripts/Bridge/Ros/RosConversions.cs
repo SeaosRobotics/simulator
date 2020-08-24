@@ -9,14 +9,14 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Simulator.Bridge.Data;
-using Simulator.Bridge.Ros.LGSVL;
+using Simulator.Bridge.Ros.Lgsvl;
+using Simulator.Bridge.Ros.Autoware;
+using Unity.Mathematics;
 
 namespace Simulator.Bridge.Ros
 {
     static class Conversions
     {
-        static readonly DateTime GpsEpoch = new DateTime(1980, 1, 6, 0, 0, 0, DateTimeKind.Utc);
-
         public static CompressedImage ConvertFrom(ImageData data)
         {
             return new CompressedImage()
@@ -35,10 +35,10 @@ namespace Simulator.Bridge.Ros
                 },
             };
         }
-        
-        public static LGSVL.Detection2DArray ConvertFrom(Detected2DObjectData data)
+
+        public static Lgsvl.Detection2DArray ConvertFrom(Detected2DObjectData data)
         {
-            return new LGSVL.Detection2DArray()
+            return new Lgsvl.Detection2DArray()
             {
                 header = new Header()
                 {
@@ -67,7 +67,7 @@ namespace Simulator.Bridge.Ros
             };
         }
 
-        public static Detected2DObjectArray ConvertTo(LGSVL.Detection2DArray data)
+        public static Detected2DObjectArray ConvertTo(Lgsvl.Detection2DArray data)
         {
             return new Detected2DObjectArray()
             {
@@ -85,9 +85,9 @@ namespace Simulator.Bridge.Ros
             };
         }
 
-        public static LGSVL.Detection3DArray ConvertFrom(Detected3DObjectData data)
+        public static Lgsvl.Detection3DArray ConvertFrom(Detected3DObjectData data)
         {
-            return new LGSVL.Detection3DArray()
+            return new Lgsvl.Detection3DArray()
             {
                 header = new Header()
                 {
@@ -118,9 +118,9 @@ namespace Simulator.Bridge.Ros
             };
         }
 
-        public static LGSVL.SignalArray ConvertFrom(SignalDataArray data)
+        public static Lgsvl.SignalArray ConvertFrom(SignalDataArray data)
         {
-            return new LGSVL.SignalArray()
+            return new Lgsvl.SignalArray()
             {
                 header = new Header()
                 {
@@ -199,6 +199,40 @@ namespace Simulator.Bridge.Ros
             return r;
         }
 
+        public static Lgsvl.DetectedRadarObjectArray ROS2ConvertFrom(DetectedRadarObjectData data)
+        {
+            var r = new Lgsvl.DetectedRadarObjectArray()
+            {
+                header = new Header()
+                {
+                    stamp = ConvertTime(data.Time),
+                    seq = data.Sequence,
+                    frame_id = data.Frame,
+                },
+            };
+
+            foreach (var obj in data.Data)
+            {
+                r.objects.Add(new Lgsvl.DetectedRadarObject()
+                {
+                    sensor_aim = ConvertToRosVector3(obj.SensorAim),
+                    sensor_right = ConvertToRosVector3(obj.SensorRight),
+                    sensor_position = ConvertToRosPoint(obj.SensorPosition),
+                    sensor_velocity = ConvertToRosVector3(obj.SensorVelocity),
+                    sensor_angle = obj.SensorAngle,
+                    object_position = ConvertToRosPoint(obj.Position),
+                    object_velocity = ConvertToRosVector3(obj.Velocity),
+                    object_relative_position = ConvertToRosPoint(obj.RelativePosition),
+                    object_relative_velocity = ConvertToRosVector3(obj.RelativeVelocity),
+                    object_collider_size = ConvertToRosVector3(obj.ColliderSize),
+                    object_state = (byte)obj.State,
+                    new_detection = obj.NewDetection,
+                });
+            }
+
+            return r;
+        }
+
         public static Apollo.ChassisMsg ConvertFrom(CanBusData data)
         {
             var eul = data.Orientation.eulerAngles;
@@ -208,7 +242,7 @@ namespace Simulator.Bridge.Ros
             else dir = 45 * UnityEngine.Mathf.Round((eul.y % 360 + 360) / 45.0f);
 
             var dt = DateTimeOffset.FromUnixTimeMilliseconds((long)(data.Time * 1000.0)).UtcDateTime;
-            var measurement_time = (dt - GpsEpoch).TotalSeconds + 18.0;
+            var measurement_time = GpsUtils.UtcToGpsSeconds(dt);
             var gpsTime = DateTimeOffset.FromUnixTimeSeconds((long)measurement_time).DateTime.ToLocalTime();
 
             return new Apollo.ChassisMsg()
@@ -263,13 +297,47 @@ namespace Simulator.Bridge.Ros
             };
         }
 
+        public static Lgsvl.CanBusDataRos ROS2ReturnLgsvlConvertFrom(CanBusData data)
+        {
+            return new Lgsvl.CanBusDataRos()
+            {
+                header = new Header()
+                {
+                    stamp = ConvertTime(data.Time),
+                    seq = data.Sequence,
+                    frame_id = data.Frame,
+                },
+                speed_mps = data.Speed,
+                throttle_pct = data.Throttle,
+                brake_pct = data.Braking,
+                steer_pct = data.Steering,
+                parking_brake_active = false,   // parking brake is not supported in Simulator side
+                high_beams_active = data.HighBeamSignal,
+                low_beams_active = data.LowBeamSignal,
+                hazard_lights_active = data.HazardLights,
+                fog_lights_active = data.FogLights,
+                left_turn_signal_active = data.LeftTurnSignal,
+                right_turn_signal_active = data.RightTurnSignal,
+                wipers_active = data.Wipers,
+                reverse_gear_active = data.InReverse,
+                selected_gear = (data.InReverse ? Gear.GEAR_REVERSE : Gear.GEAR_DRIVE),
+                engine_active = data.EngineOn,
+                engine_rpm = data.EngineRPM,
+                gps_latitude = data.Latitude,
+                gps_longitude = data.Longitude,
+                gps_altitude = data.Altitude,
+                orientation = Convert(data.Orientation),
+                linear_velocities = ConvertToVector(data.Velocity),
+            };
+        }
+
         public static Apollo.GnssBestPose ConvertFrom(GpsData data)
         {
             float Accuracy = 0.01f; // just a number to report
             double Height = 0; // sea level to WGS84 ellipsoid
 
             var dt = DateTimeOffset.FromUnixTimeMilliseconds((long)(data.Time * 1000.0)).UtcDateTime;
-            var measurement_time = (dt - GpsEpoch).TotalSeconds + 18.0;
+            var measurement_time = GpsUtils.UtcToGpsSeconds(dt);
 
             return new Apollo.GnssBestPose()
             {
@@ -304,6 +372,36 @@ namespace Simulator.Bridge.Ros
             };
         }
 
+        public static NavSatFix ROS2ConvertFrom(GpsData data)
+        {
+            return new NavSatFix()
+            {
+                header = new Header()
+                {
+                    stamp = ConvertTime(data.Time),
+                    seq = data.Sequence,
+                    frame_id = data.Frame,
+                },
+                status = new NavSatStatus()
+                {
+                    status = NavFixStatus.STATUS_FIX,
+                    service = GpsServisType.SERVICE_GPS,
+                },
+                latitude = data.Latitude,
+                longitude = data.Longitude,
+                altitude = data.Altitude,
+
+                position_covariance = new double[]
+                {
+                    0.0001, 0, 0,
+                    0, 0.0001, 0,
+                    0, 0, 0.0001
+                },
+
+                position_covariance_type = CovarianceType.COVARIANCE_TYPE_DIAGONAL_KNOWN
+            };
+        }
+
         public static Odometry ConvertFrom(GpsOdometryData data)
         {
             return new Odometry()
@@ -311,17 +409,17 @@ namespace Simulator.Bridge.Ros
                 header = new Header()
                 {
                     stamp = ConvertTime(data.Time),
-                    seq = data.Sequence, 
+                    seq = data.Sequence,
                     frame_id = data.Frame,
                 },
-                child_frame_id = "base_link",
+                child_frame_id = data.ChildFrame,
                 pose = new PoseWithCovariance()
                 {
                     pose = new Pose()
                     {
                         position = new Point()
                         {
-                            x = data.Easting + (data.IgnoreMapOrigin ? 0 : 500000),
+                            x = data.Easting,
                             y = data.Northing,
                             z = data.Altitude,
                         },
@@ -352,18 +450,14 @@ namespace Simulator.Bridge.Ros
         public static Apollo.Gps ApolloConvertFrom(GpsOdometryData data)
         {
             var angles = data.Orientation.eulerAngles;
-            float roll = angles.z;
-            float pitch = angles.x;
             float yaw = -angles.y;
-            var q = UnityEngine.Quaternion.Euler(pitch, roll, yaw);
-
             var dt = DateTimeOffset.FromUnixTimeMilliseconds((long)(data.Time * 1000.0)).UtcDateTime;
 
             return new Apollo.Gps()
             {
                 header = new Apollo.Header()
                 {
-                    timestamp_sec = (dt - GpsEpoch).TotalSeconds + 18.0,
+                    timestamp_sec = GpsUtils.UtcToGpsSeconds(dt),
                     sequence_num = data.Sequence,
                 },
 
@@ -373,20 +467,14 @@ namespace Simulator.Bridge.Ros
                     // The VRP is the center of rear axle.
                     position = new Apollo.PointENU()
                     {
-                        x = data.Easting + 500000,  // East from the origin, in meters.
+                        x = data.Easting,  // East from the origin, in meters.
                         y = data.Northing,  // North from the origin, in meters.
                         z = data.Altitude  // Up from the WGS-84 ellipsoid, in meters.
                     },
 
                     // A quaternion that represents the rotation from the IMU coordinate
                     // (Right/Forward/Up) to the world coordinate (East/North/Up).
-                    orientation = new Apollo.Quaternion()
-                    {
-                        qx = q.x,
-                        qy = q.y,
-                        qz = q.z,
-                        qw = q.w,
-                    },
+                    orientation = ConvertApolloQuaternion(data.Orientation),
 
                     // Linear velocity of the VRP in the map reference frame.
                     // East/north/up in meters per second.
@@ -403,7 +491,18 @@ namespace Simulator.Bridge.Ros
             };
         }
 
-        public static Detected3DObjectArray ConvertTo(LGSVL.Detection3DArray data)
+        public static Autoware.VehicleOdometry ROS2ConvertFrom(VehicleOdometryData data)
+        {
+            return new Autoware.VehicleOdometry()
+            {
+                stamp = ConvertTime(data.Time),
+                velocity_mps = data.Speed,
+                front_wheel_angle_rad = UnityEngine.Mathf.Deg2Rad * data.SteeringAngleFront,
+                rear_wheel_angle_rad = UnityEngine.Mathf.Deg2Rad * data.SteeringAngleBack,
+            };
+        }
+
+        public static Detected3DObjectArray ConvertTo(Lgsvl.Detection3DArray data)
         {
             return new Detected3DObjectArray()
             {
@@ -437,6 +536,7 @@ namespace Simulator.Bridge.Ros
 
             return new VehicleControlData()
             {
+                TimeStampSec = ConvertTime(data.header.stamp),
                 Acceleration = (float)data.ctrl_cmd.linear_acceleration > 0 ? (float)data.ctrl_cmd.linear_acceleration : 0f,
                 Breaking = (float)data.ctrl_cmd.linear_acceleration < 0 ? -(float)data.ctrl_cmd.linear_acceleration : 0f,
                 Velocity = (float)data.twist_cmd.twist.linear.x,
@@ -444,6 +544,54 @@ namespace Simulator.Bridge.Ros
                 SteerAngle = (float)data.ctrl_cmd.steering_angle,
                 ShiftGearUp = shiftUp,
                 ShiftGearDown = shiftDown,
+            };
+        }
+
+        public static VehicleControlData ConvertTo(Autoware.VehicleControlCommand data)
+        {
+            return new VehicleControlData()
+            {
+                TimeStampSec = ConvertTime(data.stamp),
+                Acceleration = data.long_accel_mps2,
+                SteerAngle = data.front_wheel_angle_rad,
+            };
+        }
+
+        public static VehicleControlData ConvertTo(Lgsvl.VehicleControlDataRos data)
+        {
+            float Deg2Rad = UnityEngine.Mathf.Deg2Rad;
+            float MaxSteeringAngle = 39.4f * Deg2Rad;
+            float wheelAngle = 0f;
+            if (data.target_wheel_angle > MaxSteeringAngle)
+                wheelAngle = MaxSteeringAngle;
+            else if (data.target_wheel_angle < -MaxSteeringAngle)
+                wheelAngle = -MaxSteeringAngle;
+
+            // ratio between -MaxSteeringAngle and MaxSteeringAngle
+            var k = (float)(wheelAngle + MaxSteeringAngle) / (MaxSteeringAngle*2);
+
+            // target_wheel_angular_rate, target_gear are not supported on simulator side.
+            return new VehicleControlData()
+            {
+                Acceleration = data.acceleration_pct,
+                Breaking = data.braking_pct,
+                SteerAngle = UnityEngine.Mathf.Lerp(-1f, 1f, k),
+            };
+        }
+
+        public static VehicleStateData ConvertTo(Lgsvl.VehicleStateDataRos data)
+        {
+            return new VehicleStateData()
+            {
+                Time = ConvertTime(data.header.stamp),
+                Blinker = (byte)data.blinker_state,
+                HeadLight = (byte)data.headlight_state,
+                Wiper = (byte)data.wiper_state,
+                Gear = (byte)data.current_gear,
+                Mode = (byte)data.vehicle_mode,
+                HandBrake = data.hand_brake_active,
+                Horn = data.horn_active,
+                Autonomous = data.autonomous_mode_active,
             };
         }
 
@@ -471,11 +619,11 @@ namespace Simulator.Bridge.Ros
                 },
 
                 orientation = Convert(data.Orientation),
-                orientation_covariance = new double[9],
-                angular_velocity = new Vector3() { x = data.AngularVelocity.z, y = -data.AngularVelocity.x, z = data.AngularVelocity.y },
-                angular_velocity_covariance = new double[9],
-                linear_acceleration = new Vector3() { x = data.Acceleration.z, y = -data.Acceleration.x, z = data.Acceleration.y },
-                linear_acceleration_covariance = new double[9],
+                orientation_covariance = new double[9]{0.0001, 0, 0, 0, 0.0001, 0, 0, 0, 0.0001},
+                angular_velocity = ConvertToVector(data.AngularVelocity),
+                angular_velocity_covariance = new double[9]{0.0001, 0, 0, 0, 0.0001, 0, 0, 0, 0.0001},
+                linear_acceleration = ConvertToVector(data.Acceleration),
+                linear_acceleration_covariance = new double[9]{0.0001, 0, 0, 0, 0.0001, 0, 0, 0, 0.0001},
             };
         }
 
@@ -493,8 +641,8 @@ namespace Simulator.Bridge.Ros
 
                 measurement_time = data.Time,
                 measurement_span = (float)data.MeasurementSpan,
-                linear_acceleration = new Apollo.Point3D() { x = data.Acceleration.x, y = data.Acceleration.z, z = -data.Acceleration.y },
-                angular_velocity = new Apollo.Point3D() { x = -data.AngularVelocity.z, y = data.AngularVelocity.x, z = -data.AngularVelocity.y },
+                linear_acceleration = new Apollo.Point3D() { x = data.Acceleration.x, y = data.Acceleration.y, z = data.Acceleration.z },
+                angular_velocity = new Apollo.Point3D() { x = data.AngularVelocity.x, y = data.AngularVelocity.y, z = data.AngularVelocity.z },
             };
         }
 
@@ -514,8 +662,8 @@ namespace Simulator.Bridge.Ros
 
                 imu = new Apollo.Pose()
                 {
-                    linear_acceleration = new Apollo.Point3D() { x = data.Acceleration.x, y = data.Acceleration.z, z = -data.Acceleration.y },
-                    angular_velocity = new Apollo.Point3D() { x = -data.AngularVelocity.z, y = data.AngularVelocity.x, z = -data.AngularVelocity.y },
+                    linear_acceleration = new Apollo.Point3D() { x = data.Acceleration.x, y = data.Acceleration.y, z = -data.Acceleration.z },
+                    angular_velocity = new Apollo.Point3D() { x = data.AngularVelocity.x, y = data.AngularVelocity.y, z = data.AngularVelocity.z },
                     heading = yaw,
                     euler_angles = new Apollo.Point3D()
                     {
@@ -584,9 +732,24 @@ namespace Simulator.Bridge.Ros
             return new Point() { x = v.x, y = v.y, z = v.z };
         }
 
+        static Point ConvertToPoint(double3 d)
+        {
+            return new Point() { x = d.x, y = d.y, z = d.z };
+        }
+
         static Vector3 ConvertToVector(UnityEngine.Vector3 v)
         {
             return new Vector3() { x = v.x, y = v.y, z = v.z };
+        }
+
+        static Vector3 ConvertToRosVector3(UnityEngine.Vector3 v)
+        {
+            return new Vector3() { x = v.z, y = -v.x, z = v.y };
+        }
+
+        static Point ConvertToRosPoint(UnityEngine.Vector3 v)
+        {
+            return new Point() { x = v.z, y = -v.x, z = v.y };
         }
 
         static Quaternion Convert(UnityEngine.Quaternion q)
@@ -594,9 +757,14 @@ namespace Simulator.Bridge.Ros
             return new Quaternion() { x = q.x, y = q.y, z = q.z, w = q.w };
         }
 
-        static UnityEngine.Vector3 Convert(Point p)
+        static Apollo.Quaternion ConvertApolloQuaternion(UnityEngine.Quaternion q)
         {
-            return new UnityEngine.Vector3((float)p.x, (float)p.y, (float)p.z);
+            return new Apollo.Quaternion() { qx = q.x, qy = q.y, qz = q.z, qw = q.w };
+        }
+
+        static double3 Convert(Point p)
+        {
+            return new double3(p.x, p.y, p.z);
         }
 
         static UnityEngine.Vector3 Convert(Vector3 v)
@@ -618,6 +786,13 @@ namespace Simulator.Bridge.Ros
                 secs = nanosec / 1000000000,
                 nsecs = (uint)(nanosec % 1000000000),
             };
+        }
+
+        public static double ConvertTime(Time t)
+        {
+            double time = (double)t.secs + (double)t.nsecs / 1000000000;
+
+            return time;
         }
     }
 }

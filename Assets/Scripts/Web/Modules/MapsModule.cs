@@ -41,6 +41,7 @@ namespace Simulator.Web.Modules
         public string Url;
         public string PreviewUrl;
         public string Status;
+        public string Error;
 
         public static MapResponse Create(MapModel map)
         {
@@ -51,6 +52,7 @@ namespace Simulator.Web.Modules
                 PreviewUrl = map.PreviewUrl,
                 Status = map.Status,
                 Id = (long)map.Id,
+                Error = map.Error,
             };
         }
     }
@@ -66,13 +68,13 @@ namespace Simulator.Web.Modules
                 .NotEmpty().WithMessage("You must specify a non-empty URL")
                 .Must(Validation.IsValidUrl).WithMessage("You must specify a valid URL")
                 .Must(Validation.BeValidFilePath).WithMessage("You must specify a valid URL")
-                .Must(Validation.BeValidAssetBundle).WithMessage("You must specify a valid AssetBundle File");
+                .Must(Validation.BeValidAssetBundle).WithMessage("You must specify a valid AssetBundle");
         }
     }
 
     public class MapsModule : NancyModule
     {
-        public MapsModule(IMapService service, IUserService userService, IDownloadService downloadService, INotificationService notificationService) : base("maps")
+        public MapsModule(IMapService service, IDownloadService downloadService, INotificationService notificationService) : base("maps")
         {
             this.RequiresAuthentication();
 
@@ -83,12 +85,39 @@ namespace Simulator.Web.Modules
                 Debug.Log($"Listing maps");
                 try
                 {
-                    int page = Request.Query["page"];
+                    string filter = Request.Query["filter"];
+                    int offset = Request.Query["offset"];
                     // TODO: Items per page should be read from personal user settings.
                     //       This value should be independent for each module: maps, vehicles and simulation.
                     //       But for now 5 is just an arbitrary value to ensure that we don't try and Page a count of 0
                     int count = Request.Query["count"] > 0 ? Request.Query["count"] : Config.DefaultPageSize;
-                    return service.List(page, count, this.Context.CurrentUser.Identity.Name).Select(MapResponse.Create).ToArray();
+                    return service.List(filter, offset, count, this.Context.CurrentUser.Identity.Name)
+                        .Select(map =>
+                        {
+                            if (map.Status != "Downloading")
+                            {
+                                bool valid;
+                                try
+                                {
+                                    valid = Validation.BeValidAssetBundle(map.LocalPath);
+                                }
+                                catch (Exception ex)
+                                {
+                                    Debug.LogException(ex);
+                                    valid = false;
+                                }
+
+                                if (!valid)
+                                {
+                                    map.Status = "Invalid";
+                                    map.Error = "Missing or wrong Map AssetBundle. Please check content website for updated bundle or rebuild the bundle.";
+                                    // TODO: this should be more precise what exactly is wrong (file missing, wrong BundleFormat version, not a zip file, etc...)
+                                }
+                            }
+                            return map;
+                        })
+                        .Select(MapResponse.Create)
+                        .ToArray();
                 }
                 catch (Exception ex)
                 {
@@ -132,6 +161,11 @@ namespace Simulator.Web.Modules
                     }
 
                     var map = req.ToModel(this.Context.CurrentUser.Identity.Name);
+                    string localPath = service.GetExistingLocalPath(map.Url);
+                    if (!string.IsNullOrEmpty(localPath))
+                    {
+                        map.LocalPath = localPath;
+                    }
 
                     var uri = new Uri(map.Url);
                     if (uri.IsFile)
@@ -158,12 +192,30 @@ namespace Simulator.Web.Modules
                             uri,
                             map.LocalPath,
                             progress => notificationService.Send("MapDownload", new { map.Id, progress }, map.Owner),
-                            success =>
+                            (success, ex) =>
                             {
                                 var updatedModel = service.Get(id, map.Owner);
-                                updatedModel.Status = success && Validation.BeValidAssetBundle(updatedModel.LocalPath) ? "Valid" : "Invalid";
+
+                                bool passesValidation = false;
+                                if (success)
+                                {
+                                    passesValidation = Validation.BeValidAssetBundle(updatedModel.LocalPath);
+                                    if (!passesValidation)
+                                    {
+                                        updatedModel.Error = "You must specify a valid AssetBundle";
+                                    }
+                                }
+
+                                updatedModel.Status = passesValidation ? "Valid" : "Invalid";
+
+                                if (ex != null)
+                                {
+                                    map.Error = ex.Message;
+                                }
+
                                 service.Update(updatedModel);
                                 notificationService.Send("MapDownloadComplete", updatedModel, map.Owner);
+
                                 SIM.LogWeb(SIM.Web.MapDownloadFinish, map.Name);
                             }
                         );
@@ -203,7 +255,7 @@ namespace Simulator.Web.Modules
                             map.Status = "Valid";
                             map.LocalPath = uri.LocalPath;
                         }
-                        else
+                        else if(service.GetCountOfLocal(map.Url) == 0)
                         {
                             map.Status = "Downloading";
                             map.LocalPath = WebUtilities.GenerateLocalPath("Maps");
@@ -212,16 +264,40 @@ namespace Simulator.Web.Modules
                                 uri,
                                 map.LocalPath,
                                 progress => notificationService.Send("MapDownload", new { map.Id, progress }, map.Owner),
-                                success =>
+                                (success, ex) =>
                                 {
                                     var updatedModel = service.Get(id, map.Owner);
-                                    updatedModel.Status = success && Validation.BeValidAssetBundle(updatedModel.LocalPath) ? "Valid" : "Invalid";
+                                    bool passesValidation = false;
+                                    if (success)
+                                    {
+                                        passesValidation = Validation.BeValidAssetBundle(updatedModel.LocalPath);
+                                        if (!passesValidation)
+                                        {
+                                            updatedModel.Error = "You must specify a valid AssetBundle";
+                                        }
+                                    }
+
+                                    updatedModel.Status = passesValidation ? "Valid" : "Invalid";
+
+                                    if (ex != null)
+                                    {
+                                        updatedModel.Error = ex.Message;
+                                    }
+
                                     service.Update(updatedModel);
                                     notificationService.Send("MapDownloadComplete", updatedModel, map.Owner);
+
                                     SIM.LogWeb(SIM.Web.MapDownloadFinish, map.Name);
                                 }
                             );
                         }
+                        else
+                        {
+                            string localPath = service.GetExistingLocalPath(map.Url);
+                            map.Status = "Valid";
+                            map.LocalPath = localPath;
+                        }
+
                         map.Url = req.url;
                     }
 
@@ -259,16 +335,19 @@ namespace Simulator.Web.Modules
                 {
                     MapModel map = service.Get(id, this.Context.CurrentUser.Identity.Name);
 
-                    if (map.Status == "Downloading")
+                    if (service.GetCountOfLocal(map.LocalPath) == 1)
                     {
-                        downloadService.StopDownload(map.Url);
-                        SIM.LogWeb(SIM.Web.MapDownloadStop, map.Name);
-                    }
+                        if (map.Status == "Downloading")
+                        {
+                            downloadService.StopDownload(map.Url);
+                            SIM.LogWeb(SIM.Web.MapDownloadStop, map.Name);
+                        }
 
-                    if (!new Uri(map.Url).IsFile && File.Exists(map.LocalPath))
-                    {
-                        Debug.Log($"Deleting file at path: {map.LocalPath}");
-                        File.Delete(map.LocalPath);
+                        if (!new Uri(map.Url).IsFile && File.Exists(map.LocalPath))
+                        {
+                            Debug.Log($"Deleting file at path: {map.LocalPath}");
+                            File.Delete(map.LocalPath);
+                        }
                     }
 
                     int result = service.Delete(id, map.Owner);
@@ -351,12 +430,18 @@ namespace Simulator.Web.Modules
                                     Debug.Log($"Map Download at {progress}%");
                                     notificationService.Send("MapDownload", new { map.Id, progress }, map.Owner);
                                 },
-                                success =>
+                                (success, ex) =>
                                 {
                                     var updatedModel = service.Get(id, map.Owner);
                                     updatedModel.Status = success && Validation.BeValidAssetBundle(updatedModel.LocalPath) ? "Valid" : "Invalid";
+                                    if (ex != null)
+                                    {
+                                        updatedModel.Error = ex.Message;
+                                    }
+
                                     service.Update(updatedModel);
                                     notificationService.Send("MapDownloadComplete", updatedModel, map.Owner);
+
                                     SIM.LogWeb(SIM.Web.MapDownloadFinish, map.Name);
                                 }
                             );

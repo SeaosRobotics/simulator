@@ -1,26 +1,47 @@
 using System;
-using UnityEngine.Rendering;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
+    /// <summary>
+    /// A volume component that holds settings for the Lens Distortion effect.
+    /// </summary>
     [Serializable, VolumeComponentMenu("Post-processing/Lens Distortion")]
     public sealed class LensDistortion : VolumeComponent, IPostProcessComponent
     {
-        [Tooltip("Total distortion amount.")]
+        /// <summary>
+        /// Controls the overall strength of the distortion effect.
+        /// </summary>
+        [Tooltip("Controls the overall strength of the distortion effect.")]
         public ClampedFloatParameter intensity = new ClampedFloatParameter(0f, -1f, 1f);
 
-        [Tooltip("Intensity multiplier on X axis. Set it to 0 to disable distortion on this axis.")]
+        /// <summary>
+        /// Controls the distortion intensity on the x-axis. Acts as a multiplier.
+        /// </summary>
+        [Tooltip("Controls the distortion intensity on the x-axis. Acts as a multiplier.")]
         public ClampedFloatParameter xMultiplier = new ClampedFloatParameter(1f, 0f, 1f);
 
-        [Tooltip("Intensity multiplier on Y axis. Set it to 0 to disable distortion on this axis.")]
+        /// <summary>
+        /// Controls the distortion intensity on the x-axis. Acts as a multiplier.
+        /// </summary>
+        [Tooltip("Controls the distortion intensity on the x-axis. Acts as a multiplier.")]
         public ClampedFloatParameter yMultiplier = new ClampedFloatParameter(1f, 0f, 1f);
 
-        [Tooltip("Distortion center point.")]
+        /// <summary>
+        /// Sets the center point for the distortion.
+        /// </summary>
+        [Tooltip("Sets the center point for the distortion.")]
         public Vector2Parameter center = new Vector2Parameter(new Vector2(0.5f, 0.5f));
 
-        [Tooltip("Global screen scaling.")]
+        /// <summary>
+        /// Controls global screen scaling for the distortion effect. Use this to hide the screen borders when using a high <see cref="intensity"/>.
+        /// </summary>
+        [Tooltip("Controls global screen scaling for the distortion effect. Use this to hide the screen borders when using a high \"Intensity\".")]
         public ClampedFloatParameter scale = new ClampedFloatParameter(1f, 0.01f, 5f);
 
+        /// <summary>
+        /// Tells if the effect needs to be rendered or not.
+        /// </summary>
+        /// <returns><c>true</c> if the effect should be rendered, <c>false</c> otherwise.</returns>
         public bool IsActive()
         {
             return !Mathf.Approximately(intensity.value, 0f)

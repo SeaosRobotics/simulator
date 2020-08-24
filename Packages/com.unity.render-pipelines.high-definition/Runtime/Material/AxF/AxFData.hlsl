@@ -7,13 +7,13 @@
 
 void ApplyDecalToSurfaceData(DecalSurfaceData decalSurfaceData, inout SurfaceData surfaceData)
 {
-#if defined(_AXF_BRDF_TYPE_SVBRDF) && defined(_AXF_BRDF_TYPE_CAR_PAINT) // Not implemented for BTF
+#if defined(_AXF_BRDF_TYPE_SVBRDF) || defined(_AXF_BRDF_TYPE_CAR_PAINT) // Not implemented for BTF
     // using alpha compositing https://developer.nvidia.com/gpugems/GPUGems3/gpugems3_ch23.html
     if (decalSurfaceData.HTileMask & DBUFFERHTILEBIT_DIFFUSE)
     {
-        surfaceData.diffuseColor.xyz = surfaceData.diffuseColor.xyz * decalSurfaceData.diffuseColor.w + decalSurfaceData.diffuseColor.xyz;
+        surfaceData.diffuseColor.xyz = surfaceData.diffuseColor.xyz * decalSurfaceData.baseColor.w + decalSurfaceData.baseColor.xyz;
 #ifdef _AXF_BRDF_TYPE_SVBRDF
-        surfaceData.clearcoatColor.xyz = surfaceData.clearcoatColor.xyz * decalSurfaceData.diffuseColor.w + decalSurfaceData.diffuseColor.xyz;
+        surfaceData.clearcoatColor.xyz = surfaceData.clearcoatColor.xyz * decalSurfaceData.baseColor.w + decalSurfaceData.baseColor.xyz;
 #endif
     }
 
@@ -36,7 +36,8 @@ void ApplyDecalToSurfaceData(DecalSurfaceData decalSurfaceData, inout SurfaceDat
         // Note:There is no ambient occlusion with AxF material
 #endif
 
-        surfaceData.specularLobe = PerceptualSmoothnessToRoughness(RoughnessToPerceptualSmoothness(surfaceData.specularLobe) * decalSurfaceData.mask.w + decalSurfaceData.mask.z);
+        surfaceData.specularLobe.x = PerceptualSmoothnessToRoughness(RoughnessToPerceptualSmoothness(surfaceData.specularLobe.x) * decalSurfaceData.mask.w + decalSurfaceData.mask.z);
+        surfaceData.specularLobe.y = PerceptualSmoothnessToRoughness(RoughnessToPerceptualSmoothness(surfaceData.specularLobe.y) * decalSurfaceData.mask.w + decalSurfaceData.mask.z);
     }
 #endif
 }
@@ -97,7 +98,7 @@ void GetSurfaceAndBuiltinData(FragInputs input, float3 V, inout PositionInputs p
     surfaceData.diffuseColor = _CarPaint2_CTDiffuse;
     surfaceData.clearcoatIOR = max(1.001, _CarPaint2_ClearcoatIOR); // Can't be exactly 1 otherwise the precise fresnel divides by 0!
 
-    surfaceData.normalWS = input.worldToTangent[2].xyz;
+    surfaceData.normalWS = input.tangentToWorld[2].xyz;
     GetNormalWS(input, 2.0 * SAMPLE_TEXTURE2D(_ClearcoatNormalMap, sampler_ClearcoatNormalMap, UV0).xyz - 1.0, surfaceData.clearcoatNormalWS, doubleSidedConstants);
 
     // Create mirrored UVs to hide flakes tiling
@@ -122,39 +123,49 @@ void GetSurfaceAndBuiltinData(FragInputs input, float3 V, inout PositionInputs p
     surfaceData.clearcoatColor = 0;
 #endif
 
+    // Propagate the geometry normal
+    surfaceData.geomNormalWS = input.tangentToWorld[2];
+
     // Finalize tangent space
-    surfaceData.tangentWS = input.worldToTangent[0];
-    if (_Flags & 1) // IsAnisotropic
+    surfaceData.tangentWS = input.tangentToWorld[0];
+    if (HasAnisotropy())
     {
         float3 tangentTS = float3(1, 0, 0);
         // We will keep anisotropyAngle in surfaceData for now for debug info, register will be freed
         // anyway by the compiler (never used again after this)
         sincos(surfaceData.anisotropyAngle, tangentTS.y, tangentTS.x);
-        surfaceData.tangentWS = TransformTangentToWorld(tangentTS, input.worldToTangent);
+        surfaceData.tangentWS = TransformTangentToWorld(tangentTS, input.tangentToWorld);
     }
+
+    #if HAVE_DECALS
+        if (_EnableDecals)
+        {
+            // Both uses and modifies 'surfaceData.normalWS'.
+            DecalSurfaceData decalSurfaceData = GetDecalSurfaceData(posInput, alpha);
+            ApplyDecalToSurfaceData(decalSurfaceData, surfaceData);
+        }
+    #endif
+
     surfaceData.tangentWS = Orthonormalize(surfaceData.tangentWS, surfaceData.normalWS);
 
     // Instead of
-    // surfaceData.biTangentWS = Orthonormalize(input.worldToTangent[1], surfaceData.normalWS),
+    // surfaceData.biTangentWS = Orthonormalize(input.tangentToWorld[1], surfaceData.normalWS),
     // make AxF follow what we do in other HDRP shaders for consistency: use the
     // cross product to finish building the TBN frame and thus get a frame matching
-    // the handedness of the world space (worldToTangent can be passed right handed while
+    // the handedness of the world space (tangentToWorld can be passed right handed while
     // Unity's WS is left handed, so this makes a difference here).
 
-    // Propagate the geometry normal
-    surfaceData.geomNormalWS = input.worldToTangent[2];
-
 #ifdef _ALPHATEST_ON
-    DoAlphaTest(alpha, _AlphaCutoff);
+    // TODO: Move alpha test earlier and test.
+    float alphaCutoff = _AlphaCutoff;
+
+    #if SHADERPASS == SHADERPASS_SHADOWS 
+        GENERIC_ALPHA_TEST(alpha, _UseShadowThreshold ? _AlphaCutoffShadow : alphaCutoff);
+    #else
+        GENERIC_ALPHA_TEST(alpha, alphaCutoff);
+    #endif
 #endif
 
-#if HAVE_DECALS
-    if (_EnableDecals)
-    {
-        DecalSurfaceData decalSurfaceData = GetDecalSurfaceData(posInput, alpha);
-        ApplyDecalToSurfaceData(decalSurfaceData, surfaceData);
-    }
-#endif
 
 #if defined(DEBUG_DISPLAY)
     if (_DebugMipMapMode != DEBUGMIPMAPMODE_NONE)
@@ -165,7 +176,7 @@ void GetSurfaceAndBuiltinData(FragInputs input, float3 V, inout PositionInputs p
 
     // We need to call ApplyDebugToSurfaceData after filling the surfarcedata and before filling builtinData
     // as it can modify attribute use for static lighting
-    ApplyDebugToSurfaceData(input.worldToTangent, surfaceData);
+    ApplyDebugToSurfaceData(input.tangentToWorld, surfaceData);
 #endif
 
     // -------------------------------------------------------------

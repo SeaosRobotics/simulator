@@ -13,7 +13,6 @@
 #define SSR_TRACE_BEHIND_OBJECTS
 #define SSR_TRACE_TOWARDS_EYE
 #define SSR_TRACE_EPS            0.00024414 // 2^-12, should be good up to 4K
-#define SSR_USE_STENCIL // enable to take into account the disable reflection flags
 
 //--------------------------------------------------------------------------------------------------
 // Included headers
@@ -42,7 +41,7 @@
 #endif
 
 #ifdef SSR_TRACE
-       TEXTURE2D_X(         _StencilTexture);
+    TEXTURE2D_X_UINT2(         _StencilTexture);
     RW_TEXTURE2D_X(float2, _SsrHitPointTexture);
 #else
        TEXTURE2D_X(        _SsrHitPointTexture);
@@ -50,10 +49,11 @@
 #endif
 
     TEXTURE2D_X(            _SsrClearCoatMaskTexture);
-    StructuredBuffer<int2>  _SsrDepthPyramidMipLevelOffsets;
+    StructuredBuffer<int2>  _DepthPyramidMipLevelOffsets;
+    StructuredBuffer<uint>  _CoarseStencilBuffer;
 
 CBUFFER_START(UnityScreenSpaceReflections)
-    int   _SsrStencilExclusionValue;
+    int   _SsrStencilBit;
     int   _SsrIterLimit;
     float _SsrThicknessScale;
     float _SsrThicknessBias;
@@ -94,23 +94,34 @@ void WriteDebugInfo(uint2 positionSS, float4 value)
 #ifdef SSR_TRACE
 
 [numthreads(8, 8, 1)]
-void ScreenSpaceReflectionsTracing(uint3 dispatchThreadId : SV_DispatchThreadID)
+void ScreenSpaceReflectionsTracing(uint3 groupId          : SV_GroupID,
+                                   uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    UNITY_STEREO_ASSIGN_COMPUTE_EYE_INDEX(dispatchThreadId.z);
+    UNITY_XR_ASSIGN_VIEW_INDEX(dispatchThreadId.z);
     uint2 positionSS = dispatchThreadId.xy;
 
-#ifdef SSR_USE_STENCIL
-    uint stencilVal = UnpackByte(LOAD_TEXTURE2D_X(_StencilTexture, positionSS).r);
-    bool doesntReceiveSSR = (stencilVal & _SsrStencilExclusionValue) != 0;
+    // Check HTile first. Note htileAddress should be already in scalar before WaveReadLaneFirst, but forcing it to be sure.
+    // TODO: Verify the need of WaveReadLaneFirst
+    uint htileAddress = WaveReadLaneFirst(Get1DAddressFromPixelCoord(groupId.xy, _CoarseStencilBufferSize.xy, groupId.z));
+    uint htileValue   = _CoarseStencilBuffer[htileAddress];
+
+    bool doesntReceiveSSR = (htileValue & _SsrStencilBit) == 0;
     if (doesntReceiveSSR)
     {
         WriteDebugInfo(positionSS, -1);
         return;
     }
-#endif
+
+    uint stencilValue = GetStencilValue(LOAD_TEXTURE2D_X(_StencilTexture, dispatchThreadId.xy));
+    doesntReceiveSSR = (stencilValue & _SsrStencilBit) == 0;
+    if (doesntReceiveSSR)
+    {
+        WriteDebugInfo(positionSS, -1);
+        return;
+    }
 
     float2 positionNDC = positionSS * _ScreenSize.zw + (0.5 * _ScreenSize.zw); // Should we precompute the half-texel bias? We seem to use it a lot.
-    float  deviceDepth = LOAD_TEXTURE2D_X(_DepthPyramidTexture, positionSS).r;
+    float  deviceDepth = LOAD_TEXTURE2D_X(_CameraDepthTexture, positionSS).r;
 
     bool killRay = deviceDepth == UNITY_RAW_FAR_CLIP_VALUE;
 
@@ -214,13 +225,13 @@ void ScreenSpaceReflectionsTracing(uint3 dispatchThreadId : SV_DispatchThreadID)
         rayPos.xy += raySign.xy * satEdgeDist;
 
         int2 mipCoord  = (int2)rayPos.xy >> mipLevel;
-        int2 mipOffset = _SsrDepthPyramidMipLevelOffsets[mipLevel];
+        int2 mipOffset = _DepthPyramidMipLevelOffsets[mipLevel];
         // Bounds define 4 faces of a cube:
         // 2 walls in front of the ray, and a floor and a base below it.
         float4 bounds;
 
         bounds.xy = (mipCoord + rayStep) << mipLevel;
-        bounds.z  = LOAD_TEXTURE2D_X(_DepthPyramidTexture, mipOffset + mipCoord).r;
+        bounds.z  = LOAD_TEXTURE2D_X(_CameraDepthTexture, mipOffset + mipCoord).r;
 
         // We define the depth of the base as the depth value as:
         // b = DeviceDepth((1 + thickness) * LinearDepth(d))
@@ -310,7 +321,7 @@ float PerceptualRoughnessFade(float perceptualRoughness, float fadeRcpLength, fl
 [numthreads(8, 8, 1)]
 void ScreenSpaceReflectionsReprojection(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
-    UNITY_STEREO_ASSIGN_COMPUTE_EYE_INDEX(dispatchThreadId.z);
+    UNITY_XR_ASSIGN_VIEW_INDEX(dispatchThreadId.z);
     uint2 positionSS = dispatchThreadId.xy;
 
     // TODO: this texture is sparse (mostly black). Can we avoid reading every texel? How about using Hi-S?
@@ -325,7 +336,7 @@ void ScreenSpaceReflectionsReprojection(uint3 dispatchThreadId : SV_DispatchThre
     // TODO: it's important to account for occlusion/disocclusion to avoid artifacts in motion.
     // This would require keeping the depth buffer from the previous frame.
     float2 motionVectorNDC;
-    DecodeMotionVector(SAMPLE_TEXTURE2D_X_LOD(_CameraMotionVectorsTexture, s_linear_clamp_sampler, min(hitPositionNDC, 1.0f - 0.5f * _ScreenSize.zw) * _ScreenToTargetScale.zw, 0), motionVectorNDC);
+    DecodeMotionVector(SAMPLE_TEXTURE2D_X_LOD(_CameraMotionVectorsTexture, s_linear_clamp_sampler, min(hitPositionNDC, 1.0f - 0.5f * _ScreenSize.zw) * _RTHandleScale.xy, 0), motionVectorNDC);
     float2 prevFrameNDC = hitPositionNDC - motionVectorNDC;
     float2 prevFrameUV  = prevFrameNDC * _ColorPyramidUvScaleAndLimitPrevFrame.xy;
 
@@ -349,10 +360,6 @@ void ScreenSpaceReflectionsReprojection(uint3 dispatchThreadId : SV_DispatchThre
     float  opacity  = EdgeOfScreenFade(prevFrameNDC, _SsrEdgeFadeRcpLength)
                     * PerceptualRoughnessFade(perceptualRoughness, _SsrRoughnessFadeRcpLength, _SsrRoughnessFadeEndTimesRcpLength);
 
-    // Inverse pre-exposure
-    float prevExposure = GetPreviousExposureMultiplier();
-    color /= prevExposure + (prevExposure == 0.0); // zero-div guard
-    
     // Disable SSR for negative, infinite and NaN history values.
     uint3 intCol   = asuint(color);
     bool  isPosFin = Max3(intCol.r, intCol.g, intCol.b) < 0x7F800000;

@@ -10,6 +10,7 @@ using Simulator.Bridge;
 using Simulator.Bridge.Data;
 using Simulator.Utilities;
 using Simulator.Sensors.UI;
+using System.Collections.Generic;
 
 namespace Simulator.Sensors
 {
@@ -17,11 +18,13 @@ namespace Simulator.Sensors
     public class ManualControlSensor : SensorBase, IVehicleInputs
     {
         private SimulatorControls controls;
-        private VehicleDynamics dynamics;
+        private IVehicleDynamics dynamics;
         private VehicleActions actions;
 
         public float SteerInput { get; private set; } = 0f;
         public float AccelInput { get; private set; } = 0f;
+        public float BrakeInput { get; private set; } = 0f;
+
         private Vector2 keyboardInput = Vector2.zero;
 
         AgentController AgentController;
@@ -30,7 +33,7 @@ namespace Simulator.Sensors
         {
             AgentController = GetComponentInParent<AgentController>();
 
-            dynamics = GetComponentInParent<VehicleDynamics>();
+            dynamics = GetComponentInParent<IVehicleDynamics>();
             actions = GetComponentInParent<VehicleActions>();
 
             Debug.Assert(dynamics != null);
@@ -45,19 +48,19 @@ namespace Simulator.Sensors
             }
             else
             {
-                controls.Vehicle.Direction.started += DirectionStarted;
-                controls.Vehicle.Direction.performed += DirectionPerformed;
-                controls.Vehicle.Direction.canceled += DirectionCanceled;
-                controls.Vehicle.ShiftFirst.performed += ShiftFirstPerformed;
-                controls.Vehicle.ShiftReverse.performed += ShiftReversePerformed;
-                controls.Vehicle.ParkingBrake.performed += ParkingBrakePerformed;
-                controls.Vehicle.Ignition.performed += IgnitionPerformed;
-                controls.Vehicle.HeadLights.performed += HeadLightsPerformed;
-                controls.Vehicle.IndicatorLeft.performed += IndicatorLeftPerformed;
-                controls.Vehicle.IndicatorRight.performed += IndicatorRightPerformed;
-                controls.Vehicle.IndicatorHazard.performed += IndicatorHazardPerformed;
-                controls.Vehicle.FogLights.performed += FogLightsPerformed;
-                controls.Vehicle.InteriorLight.performed += InteriorLightPerformed;
+                controls.VehicleKeyboard.Direction.started += DirectionStarted;
+                controls.VehicleKeyboard.Direction.performed += DirectionPerformed;
+                controls.VehicleKeyboard.Direction.canceled += DirectionCanceled;
+                controls.VehicleKeyboard.ShiftFirst.performed += ShiftFirstPerformed;
+                controls.VehicleKeyboard.ShiftReverse.performed += ShiftReversePerformed;
+                controls.VehicleKeyboard.ParkingBrake.performed += ParkingBrakePerformed;
+                controls.VehicleKeyboard.Ignition.performed += IgnitionPerformed;
+                controls.VehicleKeyboard.HeadLights.performed += HeadLightsPerformed;
+                controls.VehicleKeyboard.IndicatorLeft.performed += IndicatorLeftPerformed;
+                controls.VehicleKeyboard.IndicatorRight.performed += IndicatorRightPerformed;
+                controls.VehicleKeyboard.IndicatorHazard.performed += IndicatorHazardPerformed;
+                controls.VehicleKeyboard.FogLights.performed += FogLightsPerformed;
+                controls.VehicleKeyboard.InteriorLight.performed += InteriorLightPerformed;
             }
         }
         
@@ -167,19 +170,19 @@ namespace Simulator.Sensors
             }
             else
             {
-                controls.Vehicle.Direction.started -= DirectionStarted;
-                controls.Vehicle.Direction.performed -= DirectionPerformed;
-                controls.Vehicle.Direction.canceled -= DirectionCanceled;
-                controls.Vehicle.ShiftFirst.performed -= ShiftFirstPerformed;
-                controls.Vehicle.ShiftReverse.performed -= ShiftReversePerformed;
-                controls.Vehicle.ParkingBrake.performed -= ParkingBrakePerformed;
-                controls.Vehicle.Ignition.performed -= IgnitionPerformed;
-                controls.Vehicle.HeadLights.performed -= HeadLightsPerformed;
-                controls.Vehicle.IndicatorLeft.performed -= IndicatorLeftPerformed;
-                controls.Vehicle.IndicatorRight.performed -= IndicatorRightPerformed;
-                controls.Vehicle.IndicatorHazard.performed -= IndicatorHazardPerformed;
-                controls.Vehicle.FogLights.performed -= FogLightsPerformed;
-                controls.Vehicle.InteriorLight.performed -= InteriorLightPerformed;
+                controls.VehicleKeyboard.Direction.started -= DirectionStarted;
+                controls.VehicleKeyboard.Direction.performed -= DirectionPerformed;
+                controls.VehicleKeyboard.Direction.canceled -= DirectionCanceled;
+                controls.VehicleKeyboard.ShiftFirst.performed -= ShiftFirstPerformed;
+                controls.VehicleKeyboard.ShiftReverse.performed -= ShiftReversePerformed;
+                controls.VehicleKeyboard.ParkingBrake.performed -= ParkingBrakePerformed;
+                controls.VehicleKeyboard.Ignition.performed -= IgnitionPerformed;
+                controls.VehicleKeyboard.HeadLights.performed -= HeadLightsPerformed;
+                controls.VehicleKeyboard.IndicatorLeft.performed -= IndicatorLeftPerformed;
+                controls.VehicleKeyboard.IndicatorRight.performed -= IndicatorRightPerformed;
+                controls.VehicleKeyboard.IndicatorHazard.performed -= IndicatorHazardPerformed;
+                controls.VehicleKeyboard.FogLights.performed -= FogLightsPerformed;
+                controls.VehicleKeyboard.InteriorLight.performed -= InteriorLightPerformed;
             }
         }
 
@@ -190,7 +193,20 @@ namespace Simulator.Sensors
 
         public override void OnVisualize(Visualizer visualizer)
         {
-            //
+            Debug.Assert(visualizer != null);
+            var graphData = new Dictionary<string, object>()
+            {
+                {"Accel", AccelInput},
+                {"Steer", SteerInput},
+                {"Speed", dynamics.RB.velocity.magnitude},
+                {"Hand Brake", dynamics.HandBrake},
+                {"Ignition", dynamics.CurrentIgnitionStatus},
+                {"Reverse", dynamics.Reverse},
+                {"Gear", dynamics.CurrentGear},
+                {"RPM", dynamics.CurrentRPM},
+                {"Velocity", dynamics.RB.velocity}
+            };
+            visualizer.UpdateGraphValues(graphData);
         }
 
         public override void OnVisualizeToggle(bool state)

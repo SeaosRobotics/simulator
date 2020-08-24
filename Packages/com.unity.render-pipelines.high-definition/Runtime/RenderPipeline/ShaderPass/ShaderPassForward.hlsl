@@ -61,21 +61,27 @@ PackedVaryingsToPS VertTesselation(VaryingsToDS input)
 #endif
 
 void Frag(PackedVaryingsToPS packedInput,
-        #ifdef OUTPUT_SPLIT_LIGHTING
-            out float4 outColor : SV_Target0,  // outSpecularLighting
-            out float4 outDiffuseLighting : SV_Target1,
-            OUTPUT_SSSBUFFER(outSSSBuffer)
-        #else
-            out float4 outColor : SV_Target0
-        #ifdef _WRITE_TRANSPARENT_MOTION_VECTOR
-          , out float4 outMotionVec : SV_Target1
-        #endif // _WRITE_TRANSPARENT_MOTION_VECTOR
-        #endif // OUTPUT_SPLIT_LIGHTING
-        #ifdef _DEPTHOFFSET_ON
-            , out float outputDepth : SV_Depth
-        #endif
-          )
+#ifdef OUTPUT_SPLIT_LIGHTING
+    out float4 outColor : SV_Target0,  // outSpecularLighting
+    out float4 outDiffuseLighting : SV_Target1,
+    OUTPUT_SSSBUFFER(outSSSBuffer)
+#else
+    out float4 outColor : SV_Target0
+#ifdef _WRITE_TRANSPARENT_MOTION_VECTOR
+    , out float4 outMotionVec : SV_Target1
+#endif // _WRITE_TRANSPARENT_MOTION_VECTOR
+#endif // OUTPUT_SPLIT_LIGHTING
+#ifdef _DEPTHOFFSET_ON
+    , out float outputDepth : SV_Depth
+#endif
+)
 {
+#ifdef _WRITE_TRANSPARENT_MOTION_VECTOR
+    // Init outMotionVector here to solve compiler warning (potentially unitialized variable)
+    // It is init to the value of forceNoMotion (with 2.0)
+    outMotionVec = float4(2.0, 0.0, 0.0, 0.0);
+#endif
+
     UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(packedInput);
     FragInputs input = UnpackVaryingsMeshToFragInputs(packedInput.vmesh);
 
@@ -83,12 +89,9 @@ void Frag(PackedVaryingsToPS packedInput,
     input.positionSS.xy = _OffScreenRendering > 0 ? (input.positionSS.xy * _OffScreenDownsampleFactor) : input.positionSS.xy;
 
     uint2 tileIndex = uint2(input.positionSS.xy) / GetTileSize();
-#if defined(UNITY_SINGLE_PASS_STEREO)
-    tileIndex.x -= unity_StereoEyeIndex * _NumTileClusteredX;
-#endif
 
     // input.positionSS is SV_Position
-    PositionInputs posInput = GetPositionInput_Stereo(input.positionSS.xy, _ScreenSize.zw, input.positionSS.z, input.positionSS.w, input.positionRWS.xyz, tileIndex, unity_StereoEyeIndex);
+    PositionInputs posInput = GetPositionInput(input.positionSS.xy, _ScreenSize.zw, input.positionSS.z, input.positionSS.w, input.positionRWS.xyz, tileIndex);
 
 #ifdef VARYINGS_NEED_POSITION_WS
     float3 V = GetWorldSpaceNormalizeViewDir(input.positionRWS);
@@ -108,12 +111,15 @@ void Frag(PackedVaryingsToPS packedInput,
     outColor = float4(0.0, 0.0, 0.0, 0.0);
 
     // We need to skip lighting when doing debug pass because the debug pass is done before lighting so some buffers may not be properly initialized potentially causing crashes on PS4.
+
 #ifdef DEBUG_DISPLAY
     // Init in debug display mode to quiet warning
-    #ifdef OUTPUT_SPLIT_LIGHTING
+#ifdef OUTPUT_SPLIT_LIGHTING
     outDiffuseLighting = 0;
     ENCODE_INTO_SSSBUFFER(surfaceData, posInput.positionSS, outSSSBuffer);
-    #endif
+#endif
+
+    
 
     // Same code in ShaderPassForwardUnlit.shader
     // Reminder: _DebugViewMaterialArray[i]
@@ -167,6 +173,11 @@ void Frag(PackedVaryingsToPS packedInput,
 
             outColor = float4(result, 1.0f);
         }
+        else if (_DebugFullScreenMode == FULLSCREENDEBUGMODE_TRANSPARENCY_OVERDRAW)
+        {
+            float4 result = _DebugTransparencyOverdrawWeight * float4(TRANSPARENCY_OVERDRAW_COST, TRANSPARENCY_OVERDRAW_COST, TRANSPARENCY_OVERDRAW_COST, TRANSPARENCY_OVERDRAW_A);
+            outColor = result;
+        }
         else
 #endif
         {
@@ -203,11 +214,8 @@ void Frag(PackedVaryingsToPS packedInput,
 #ifdef _WRITE_TRANSPARENT_MOTION_VECTOR
             VaryingsPassToPS inputPass = UnpackVaryingsPassToPS(packedInput.vpass);
             bool forceNoMotion = any(unity_MotionVectorsParams.yw == 0.0);
-            if (forceNoMotion)
-            {
-                outMotionVec = float4(2.0, 0.0, 0.0, 0.0);
-            }
-            else
+            // outMotionVec is already initialize at the value of forceNoMotion (see above)
+            if (!forceNoMotion)
             {
                 float2 motionVec = CalculateMotionVector(inputPass.positionCS, inputPass.previousPositionCS);
                 EncodeMotionVector(motionVec * 0.5, outMotionVec);
@@ -215,6 +223,7 @@ void Frag(PackedVaryingsToPS packedInput,
             }
 #endif
         }
+
 #ifdef DEBUG_DISPLAY
     }
 #endif

@@ -1,9 +1,9 @@
 using System;
 
-namespace UnityEngine.Experimental.Rendering.HDPipeline
+namespace UnityEngine.Rendering.HighDefinition
 {
     /// <summary>Define helpers to manipulate <see cref="MigrationStep{TVersion, TTarget}"/>.</summary>
-    public static class MigrationStep
+    static class MigrationStep
     {
         /// <summary>Create a new <see cref="MigrationStep{TVersion, TTarget}"/>.</summary>
         /// <typeparam name="TVersion">An enum identifying the version.</typeparam>

@@ -1,10 +1,49 @@
+using System;
 using UnityEngine;
-using UnityEngine.Experimental.Rendering.HDPipeline;
-using UnityEngine.Rendering;
+using UnityEngine.Rendering.HighDefinition;
+using UnityEditor.Rendering;
+using Utilities;
 
-namespace UnityEditor.Experimental.Rendering.HDPipeline
+namespace UnityEditor.Rendering.HighDefinition
 {
     using CED = CoreEditorDrawer<SerializedFrameSettings>;
+
+    // Mirrors MaterialQuality enum and adds `FromQualitySettings`
+    enum MaterialQualityMode
+    {
+        Low,
+        Medium,
+        High,
+        FromQualitySettings,
+    }
+
+    static class MaterialQualityModeExtensions
+    {
+        public static MaterialQuality Into(this MaterialQualityMode quality)
+        {
+            switch (quality)
+            {
+                case MaterialQualityMode.High: return MaterialQuality.High;
+                case MaterialQualityMode.Medium: return MaterialQuality.Medium;
+                case MaterialQualityMode.Low: return MaterialQuality.Low;
+                case MaterialQualityMode.FromQualitySettings: return (MaterialQuality)0;
+                default: throw new ArgumentOutOfRangeException(nameof(quality));
+            }
+        }
+
+        public static MaterialQualityMode Into(this MaterialQuality quality)
+        {
+            if (quality == (MaterialQuality) 0)
+                return MaterialQualityMode.FromQualitySettings;
+            switch (quality)
+            {
+                case MaterialQuality.High: return MaterialQualityMode.High;
+                case MaterialQuality.Medium: return MaterialQualityMode.Medium;
+                case MaterialQuality.Low: return MaterialQualityMode.Low;
+                default: throw new ArgumentOutOfRangeException(nameof(quality));
+            }
+        }
+    }
 
     partial class FrameSettingsUI
     {
@@ -15,43 +54,61 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             LightingSettings = 1 << 2,
             AsynComputeSettings = 1 << 3,
             LightLoop = 1 << 4,
-#if FRAMESETTINGS_LOD_BIAS
-            OtherSettings = 1 << 5,
-#endif
         }
 
         readonly static ExpandedState<Expandable, FrameSettings> k_ExpandedState = new ExpandedState<Expandable, FrameSettings>(~(-1), "HDRP");
-        
+
+        static Rect lastBoxRect;
         internal static CED.IDrawer Inspector(bool withOverride = true) => CED.Group(
                 CED.Group((serialized, owner) =>
                 {
-                    EditorGUILayout.BeginVertical("box");
-                    EditorGUILayout.LabelField(FrameSettingsUI.frameSettingsHeaderContent, EditorStyles.boldLabel);
+                    lastBoxRect = EditorGUILayout.BeginVertical("box");
+                    
+                    // Add dedicated scope here and on each FrameSettings field to have the contextual menu on everything
+                    Rect rect = GUILayoutUtility.GetRect(1, EditorGUIUtility.singleLineHeight);
+                    using (new SerializedFrameSettings.TitleDrawingScope(rect, FrameSettingsUI.frameSettingsHeaderContent, serialized))
+                    {
+                        EditorGUI.LabelField(rect, FrameSettingsUI.frameSettingsHeaderContent, EditorStyles.boldLabel);
+                    }
                 }),
                 InspectorInnerbox(withOverride),
-                CED.Group((serialized, owner) => EditorGUILayout.EndVertical())
-                );
+                CED.Group((serialized, owner) =>
+                {
+                    EditorGUILayout.EndVertical();
+                    using (new SerializedFrameSettings.TitleDrawingScope(lastBoxRect, FrameSettingsUI.frameSettingsHeaderContent, serialized))
+                    {
+                        //Nothing to draw.
+                        //We just want to have a big blue bar at left that match the whole framesetting box.
+                        //This is because framesettings will be considered as one bg block from prefab point
+                        //of view as there is no way to separate it bit per bit in serialization and Prefab
+                        //override API rely on SerializedProperty.
+                    }
+                })
+            );
 
         //separated to add enum popup on default frame settings
         internal static CED.IDrawer InspectorInnerbox(bool withOverride = true) => CED.Group(
                 CED.FoldoutGroup(renderingSettingsHeaderContent, Expandable.RenderingPasses, k_ExpandedState, FoldoutOption.Indent | FoldoutOption.Boxed,
-                    CED.Group(190, (serialized, owner) => Drawer_SectionRenderingSettings(serialized, owner, withOverride))
+                    CED.Group(206, (serialized, owner) => Drawer_SectionRenderingSettings(serialized, owner, withOverride))
                     ),
                 CED.FoldoutGroup(lightSettingsHeaderContent, Expandable.LightingSettings, k_ExpandedState, FoldoutOption.Indent | FoldoutOption.Boxed,
-                    CED.Group(190, (serialized, owner) => Drawer_SectionLightingSettings(serialized, owner, withOverride))
+                    CED.Group(206, (serialized, owner) => Drawer_SectionLightingSettings(serialized, owner, withOverride))
                     ),
                 CED.FoldoutGroup(asyncComputeSettingsHeaderContent, Expandable.AsynComputeSettings, k_ExpandedState, FoldoutOption.Indent | FoldoutOption.Boxed,
-                    CED.Group(190, (serialized, owner) => Drawer_SectionAsyncComputeSettings(serialized, owner, withOverride))
+                    CED.Group(206, (serialized, owner) => Drawer_SectionAsyncComputeSettings(serialized, owner, withOverride))
                     ),
                 CED.FoldoutGroup(lightLoopSettingsHeaderContent, Expandable.LightLoop, k_ExpandedState, FoldoutOption.Indent | FoldoutOption.Boxed,
-                    CED.Group(190, (serialized, owner) => Drawer_SectionLightLoopSettings(serialized, owner, withOverride))
-                    )
-#if FRAMESETTINGS_LOD_BIAS
-                    , CED.FoldoutGroup(otherSettingsHeaderContent, Expandable.OtherSettings, k_ExpandedState, FoldoutOption.Indent | FoldoutOption.Boxed,
-                        CED.Group(190, (serialized, owner) => Drawer_SectionOtherSettings(serialized, owner, withOverride))
-                    )
-#endif
-                );
+                    CED.Group(206, (serialized, owner) => Drawer_SectionLightLoopSettings(serialized, owner, withOverride))
+                    ),
+                CED.Group((serialized, owner) =>
+                {
+                    RenderPipelineSettings hdrpSettings = GetHDRPAssetFor(owner).currentPlatformRenderPipelineSettings;
+                    if (hdrpSettings.supportRayTracing)
+                    {
+                        if (serialized.IsEnabled(FrameSettingsField.AsyncCompute) ?? false)
+                            EditorGUILayout.HelpBox("With Raytracing, the Asynchronous Execution will be forced to false", MessageType.Warning);
+                    }
+                }));
 
         static HDRenderPipelineAsset GetHDRPAssetFor(Editor owner)
         {
@@ -64,7 +121,7 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             else
             {
                 // Else rely on GraphicsSettings are you should be in hdrp and owner could be probe or camera.
-                hdrpAsset = GraphicsSettings.renderPipelineAsset as HDRenderPipelineAsset;
+                hdrpAsset = HDRenderPipeline.currentAsset;
             }
             return hdrpAsset;
         }
@@ -105,7 +162,7 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             }
 
             area.AmmendInfo(FrameSettingsField.LitShaderMode,
-                overrideable: () => !GL.wireframe && hdrpSettings.supportedLitShaderMode == RenderPipelineSettings.SupportedLitShaderMode.Both,
+                overrideable: () => hdrpSettings.supportedLitShaderMode == RenderPipelineSettings.SupportedLitShaderMode.Both,
                 overridedDefaultValue: defaultShaderLitMode);
 
             bool hdrpAssetSupportForward = hdrpSettings.supportedLitShaderMode != RenderPipelineSettings.SupportedLitShaderMode.DeferredOnly;
@@ -114,7 +171,7 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             bool frameSettingsOverrideToDeferred = serialized.GetOverrides(FrameSettingsField.LitShaderMode) && serialized.litShaderMode == LitShaderMode.Deferred;
             bool defaultForwardUsed = !serialized.GetOverrides(FrameSettingsField.LitShaderMode) && defaultShaderLitMode == LitShaderMode.Forward;
             bool defaultDefferedUsed = !serialized.GetOverrides(FrameSettingsField.LitShaderMode) && defaultShaderLitMode == LitShaderMode.Deferred;
-            bool msaaEnablable = !GL.wireframe && hdrpAssetSupportForward && hdrpSettings.supportMSAA && (frameSettingsOverrideToForward || defaultForwardUsed);
+            bool msaaEnablable = hdrpAssetSupportForward && hdrpSettings.supportMSAA && (frameSettingsOverrideToForward || defaultForwardUsed);
             bool depthPrepassEnablable = hdrpAssetSupportDeferred && (defaultDefferedUsed || frameSettingsOverrideToDeferred);
             area.AmmendInfo(FrameSettingsField.MSAA,
                 overrideable: () => msaaEnablable,
@@ -150,12 +207,67 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
                             throw new System.ArgumentOutOfRangeException("Unknown ShaderLitMode");
                     }
                 });
-            
+
+            area.AmmendInfo(FrameSettingsField.RayTracing, overrideable: () => hdrpSettings.supportRayTracing);
             area.AmmendInfo(FrameSettingsField.MotionVectors, overrideable: () => hdrpSettings.supportMotionVectors);
             area.AmmendInfo(FrameSettingsField.ObjectMotionVectors, overrideable: () => hdrpSettings.supportMotionVectors);
             area.AmmendInfo(FrameSettingsField.Decals, overrideable: () => hdrpSettings.supportDecals);
             area.AmmendInfo(FrameSettingsField.Distortion, overrideable: () => hdrpSettings.supportDistortion);
+
+            area.AmmendInfo(
+                FrameSettingsField.LODBiasMode,
+                overridedDefaultValue: LODBiasMode.FromQualitySettings,
+                customGetter: () => serialized.lodBiasMode.GetEnumValue<LODBiasMode>(),
+                customSetter: v => serialized.lodBiasMode.SetEnumValue((LODBiasMode)v)
+            );
+            area.AmmendInfo(FrameSettingsField.LODBiasQualityLevel,
+                overridedDefaultValue: ScalableLevel3ForFrameSettingsUIOnly.Low,
+                customGetter: () => (ScalableLevel3ForFrameSettingsUIOnly)serialized.lodBiasQualityLevel.intValue,
+                customSetter: v => serialized.lodBiasQualityLevel.intValue = (int)v,
+                customOverrideable: () => serialized.lodBiasMode.GetEnumValue<LODBiasMode>() != LODBiasMode.OverrideQualitySettings);
+
+            area.AmmendInfo(FrameSettingsField.LODBias,
+                overridedDefaultValue: QualitySettings.lodBias,
+                customGetter: () => serialized.lodBias.floatValue,
+                customSetter: v => serialized.lodBias.floatValue = (float)v,
+                customOverrideable: () => serialized.lodBiasMode.GetEnumValue<LODBiasMode>() != LODBiasMode.FromQualitySettings,
+                labelOverride: serialized.lodBiasMode.GetEnumValue<LODBiasMode>() == LODBiasMode.ScaleQualitySettings ? "Scale Factor" : "LOD Bias");
+
+            area.AmmendInfo(
+                FrameSettingsField.MaximumLODLevelMode,
+                overridedDefaultValue: MaximumLODLevelMode.FromQualitySettings,
+                customGetter: () => serialized.maximumLODLevelMode.GetEnumValue<MaximumLODLevelMode>(),
+                customSetter: v => serialized.maximumLODLevelMode.SetEnumValue((MaximumLODLevelMode)v)
+            );
+            area.AmmendInfo(FrameSettingsField.MaximumLODLevelQualityLevel,
+                overridedDefaultValue: ScalableLevel3ForFrameSettingsUIOnly.Low,
+                customGetter: () => (ScalableLevel3ForFrameSettingsUIOnly)serialized.maximumLODLevelQualityLevel.intValue,
+                customSetter: v => serialized.maximumLODLevelQualityLevel.intValue = (int)v,
+                customOverrideable: () => serialized.maximumLODLevelMode.GetEnumValue<MaximumLODLevelMode>() != MaximumLODLevelMode.OverrideQualitySettings);
+
+            area.AmmendInfo(FrameSettingsField.MaximumLODLevel,
+                overridedDefaultValue: QualitySettings.maximumLODLevel,
+                customGetter: () => serialized.maximumLODLevel.intValue,
+                customSetter: v => serialized.maximumLODLevel.intValue = (int)v,
+                customOverrideable: () => serialized.maximumLODLevelMode.GetEnumValue<MaximumLODLevelMode>() != MaximumLODLevelMode.FromQualitySettings,
+                labelOverride: serialized.maximumLODLevelMode.GetEnumValue<MaximumLODLevelMode>() == MaximumLODLevelMode.OffsetQualitySettings ? "Offset Factor" : "Maximum LOD Level");
+
+            area.AmmendInfo(FrameSettingsField.MaterialQualityLevel,
+                overridedDefaultValue: defaultFrameSettings.materialQuality.Into(),
+                customGetter: () => ((MaterialQuality)serialized.materialQuality.intValue).Into(),
+                customSetter: v => serialized.materialQuality.intValue = (int)((MaterialQualityMode)v).Into()
+            );
+
             area.Draw(withOverride);
+        }
+
+        // Use an enum to have appropriate UI enum field in the frame setting api
+        // Do not use anywhere else
+        enum ScalableLevel3ForFrameSettingsUIOnly
+        {
+            Low,
+            Medium,
+            High
         }
 
         static void Drawer_SectionLightingSettings(SerializedFrameSettings serialized, Editor owner, bool withOverride)
@@ -163,13 +275,14 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             RenderPipelineSettings hdrpSettings = GetHDRPAssetFor(owner).currentPlatformRenderPipelineSettings;
             FrameSettings defaultFrameSettings = GetDefaultFrameSettingsFor(owner);
             var area = OverridableFrameSettingsArea.GetGroupContent(1, defaultFrameSettings, serialized);
-            area.AmmendInfo(FrameSettingsField.ShadowMask, overrideable: () => hdrpSettings.supportShadowMask);
+            area.AmmendInfo(FrameSettingsField.Shadowmask, overrideable: () => hdrpSettings.supportShadowMask);
             area.AmmendInfo(FrameSettingsField.SSR, overrideable: () => hdrpSettings.supportSSR);
             area.AmmendInfo(FrameSettingsField.SSAO, overrideable: () => hdrpSettings.supportSSAO);
             area.AmmendInfo(FrameSettingsField.SubsurfaceScattering, overrideable: () => hdrpSettings.supportSubsurfaceScattering);
             area.AmmendInfo(FrameSettingsField.Volumetrics, overrideable: () => hdrpSettings.supportVolumetrics);
             area.AmmendInfo(FrameSettingsField.ReprojectionForVolumetrics, overrideable: () => hdrpSettings.supportVolumetrics);
             area.AmmendInfo(FrameSettingsField.LightLayers, overrideable: () => hdrpSettings.supportLightLayers);
+            area.AmmendInfo(FrameSettingsField.ScreenSpaceShadows, overrideable: () => hdrpSettings.hdShadowInitParams.supportScreenSpaceShadows);
             area.Draw(withOverride);
         }
 
@@ -184,37 +297,6 @@ namespace UnityEditor.Experimental.Rendering.HDPipeline
             var area = GetFrameSettingSectionContent(3, serialized, owner);
             area.Draw(withOverride);
         }
-
-#if FRAMESETTINGS_LOD_BIAS
-        static void Drawer_SectionOtherSettings(SerializedFrameSettings serialized, Editor owner, bool withOverride)
-        {
-            var area = GetFrameSettingSectionContent(4, serialized, owner);
-            area.AmmendInfo(
-                FrameSettingsField.LODBiasMode,
-                overridedDefaultValue: LODBiasMode.FromQualitySettings,
-                customGetter: () => (LODBiasMode)serialized.lodBiasMode.enumValueIndex,
-                customSetter: v => serialized.lodBiasMode.enumValueIndex = (int)v
-            );
-            area.AmmendInfo(FrameSettingsField.LODBias,
-                overridedDefaultValue: QualitySettings.lodBias,
-                customGetter: () => serialized.lodBias.floatValue,
-                customSetter: v => serialized.lodBias.floatValue = (float)v,
-                customOverrideable: () => serialized.lodBiasMode.enumValueIndex != (int)LODBiasMode.FromQualitySettings);
-
-            area.AmmendInfo(
-                FrameSettingsField.MaximumLODLevelMode,
-                overridedDefaultValue: MaximumLODLevelMode.FromQualitySettings,
-                customGetter: () => (MaximumLODLevelMode)serialized.maximumLODLevelMode.enumValueIndex,
-                customSetter: v => serialized.maximumLODLevelMode.enumValueIndex = (int)v
-            );
-            area.AmmendInfo(FrameSettingsField.MaximumLODLevel,
-                overridedDefaultValue: QualitySettings.maximumLODLevel,
-                customGetter: () => serialized.maximumLODLevel.intValue,
-                customSetter: v => serialized.maximumLODLevel.intValue = (int)v,
-                customOverrideable: () => serialized.maximumLODLevelMode.enumValueIndex != (int)MaximumLODLevelMode.FromQualitySettings);
-            area.Draw(withOverride);
-        }
-#endif
 
         static OverridableFrameSettingsArea GetFrameSettingSectionContent(int group, SerializedFrameSettings serialized, Editor owner)
         {

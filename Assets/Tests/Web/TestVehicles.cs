@@ -79,12 +79,12 @@ namespace Simulator.Tests.Web
         [Test]
         public void TestList()
         {
-            int page = 0; // default page
+            int offset = 0; // default offset
             int count = Config.DefaultPageSize; // default count
 
             Mock.Reset();
-            Mock.Setup(srv => srv.List(page, count, "Test User")).Returns(
-                Enumerable.Range(0, count).Select(i => new VehicleModel() { Id = page * count + i })
+            Mock.Setup(srv => srv.List(null, offset, count, "Test User")).Returns(
+                Enumerable.Range(0, count).Select(i => new VehicleModel() { Id = offset * count + i, LocalPath = "file:///does/not/exist" })
             );
 
             MockUser.Reset();
@@ -104,10 +104,10 @@ namespace Simulator.Tests.Web
             for (int i = 0; i < count; i++)
             {
                 var vehicle = js.Deserialize<VehicleResponse>(SimpleJson.SerializeObject(list[i]));
-                Assert.AreEqual(page * count + i, vehicle.Id);
+                Assert.AreEqual(offset * count + i, vehicle.Id);
             }
 
-            Mock.Verify(srv => srv.List(page, count, "Test User"), Times.Once);
+            Mock.Verify(srv => srv.List(null, offset, count, "Test User"), Times.Once);
             Mock.VerifyNoOtherCalls();
 
             MockUser.VerifyNoOtherCalls();
@@ -116,20 +116,20 @@ namespace Simulator.Tests.Web
         }
 
         [Test]
-        public void TestListOnlyPage()
+        public void TestListOnlyOffset()
         {
-            int page = 123;
+            int offset = 123;
             int count = Config.DefaultPageSize; // default count
 
             Mock.Reset();
-            Mock.Setup(srv => srv.List(page, count, "Test User")).Returns(
-                Enumerable.Range(0, count).Select(i => new VehicleModel() { Id = page * count + i })
+            Mock.Setup(srv => srv.List(null, offset, count, "Test User")).Returns(
+                Enumerable.Range(0, count).Select(i => new VehicleModel() { Id = offset * count + i, LocalPath = "file:///does/not/exist" })
             );
 
             MockDownload.Reset();
             MockNotification.Reset();
 
-            var result = Browser.Get($"/vehicles", ctx => ctx.Query("page", page.ToString())).Result;
+            var result = Browser.Get($"/vehicles", ctx => ctx.Query("offset", offset.ToString())).Result;
 
             Assert.AreEqual(HttpStatusCode.OK, result.StatusCode);
             Assert.That(result.ContentType.StartsWith("application/json"));
@@ -141,10 +141,10 @@ namespace Simulator.Tests.Web
             for (int i = 0; i < count; i++)
             {
                 var vehicle = js.Deserialize<VehicleResponse>(SimpleJson.SerializeObject(list[i]));
-                Assert.AreEqual(page * count + i, vehicle.Id);
+                Assert.AreEqual(offset * count + i, vehicle.Id);
             }
 
-            Mock.Verify(srv => srv.List(page, count, "Test User"), Times.Once);
+            Mock.Verify(srv => srv.List(null, offset, count, "Test User"), Times.Once);
             Mock.VerifyNoOtherCalls();
 
             MockDownload.VerifyNoOtherCalls();
@@ -152,14 +152,14 @@ namespace Simulator.Tests.Web
         }
 
         [Test]
-        public void TestListPageAndBadCount()
+        public void TestListOffsetAndBadCount()
         {
-            int page = 123;
+            int offset = 123;
             int count = Config.DefaultPageSize; // default count
 
             Mock.Reset();
-            Mock.Setup(srv => srv.List(page, count, "Test User")).Returns(
-                Enumerable.Range(0, count).Select(i => new VehicleModel() { Id = page * count + i })
+            Mock.Setup(srv => srv.List(null, offset, count, "Test User")).Returns(
+                Enumerable.Range(0, count).Select(i => new VehicleModel() { Id = offset * count + i, LocalPath = "file:///does/not/exist" })
             );
 
             MockDownload.Reset();
@@ -167,7 +167,7 @@ namespace Simulator.Tests.Web
 
             var result = Browser.Get($"/vehicles", ctx =>
             {
-                ctx.Query("page", page.ToString());
+                ctx.Query("offset", offset.ToString());
                 ctx.Query("count", "0");
             }).Result;
 
@@ -181,10 +181,10 @@ namespace Simulator.Tests.Web
             for (int i = 0; i < count; i++)
             {
                 var vehicle = js.Deserialize<VehicleResponse>(SimpleJson.SerializeObject(list[i]));
-                Assert.AreEqual(page * count + i, vehicle.Id);
+                Assert.AreEqual(offset * count + i, vehicle.Id);
             }
 
-            Mock.Verify(srv => srv.List(page, count, "Test User"), Times.Once);
+            Mock.Verify(srv => srv.List(null, offset, count, "Test User"), Times.Once);
             Mock.VerifyNoOtherCalls();
 
             MockDownload.VerifyNoOtherCalls();
@@ -192,14 +192,14 @@ namespace Simulator.Tests.Web
         }
 
         [Test]
-        public void TestListPageAndCount()
+        public void TestListOffsetAndCount()
         {
-            int page = 123;
+            int offset = 123;
             int count = 30;
 
             Mock.Reset();
-            Mock.Setup(srv => srv.List(page, count, "Test User")).Returns(
-                Enumerable.Range(0, count).Select(i => new VehicleModel() { Id = page * count + i })
+            Mock.Setup(srv => srv.List(null, offset, count, "Test User")).Returns(
+                Enumerable.Range(0, count).Select(i => new VehicleModel() { Id = offset * count + i, LocalPath = "file:///does/not/exist" })
             );
 
             MockDownload.Reset();
@@ -207,7 +207,7 @@ namespace Simulator.Tests.Web
 
             var result = Browser.Get($"/vehicles", ctx =>
             {
-                ctx.Query("page", page.ToString());
+                ctx.Query("offset", offset.ToString());
                 ctx.Query("count", count.ToString());
             }).Result;
 
@@ -221,10 +221,10 @@ namespace Simulator.Tests.Web
             for (int i = 0; i < count; i++)
             {
                 var vehicle = js.Deserialize<VehicleResponse>(SimpleJson.SerializeObject(list[i]));
-                Assert.AreEqual(page * count + i, vehicle.Id);
+                Assert.AreEqual(offset * count + i, vehicle.Id);
             }
 
-            Mock.Verify(srv => srv.List(page, count, "Test User"), Times.Once);
+            Mock.Verify(srv => srv.List(null, offset, count, "Test User"), Times.Once);
             Mock.VerifyNoOtherCalls();
 
             MockDownload.VerifyNoOtherCalls();
@@ -371,7 +371,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 var request = new VehicleRequest()
                 {
@@ -459,8 +459,8 @@ namespace Simulator.Tests.Web
 
             MockUser.Reset();
             MockDownload.Reset();
-            MockDownload.Setup(srv => srv.AddDownload(It.IsAny<Uri>(), It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()))
-                .Callback<Uri, string, Action<int>, Action<bool>>((u, localpath, update, complete) => paths.Add(localpath));
+            MockDownload.Setup(srv => srv.AddDownload(It.IsAny<Uri>(), It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()))
+                .Callback<Uri, string, Action<int>, Action<bool, Exception>>((u, localpath, update, complete) => paths.Add(localpath));
 
             MockNotification.Reset();
 
@@ -495,7 +495,7 @@ namespace Simulator.Tests.Web
 
             MockUser.VerifyNoOtherCalls();
 
-            MockDownload.Verify(srv => srv.AddDownload(It.IsAny<Uri>(), It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()), Times.Exactly(2));
+            MockDownload.Verify(srv => srv.AddDownload(It.IsAny<Uri>(), It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()), Times.Exactly(2));
             MockDownload.VerifyNoOtherCalls();
 
             MockNotification.VerifyNoOtherCalls();
@@ -544,7 +544,7 @@ namespace Simulator.Tests.Web
             MockUser.Reset();
 
             MockDownload.Reset();
-            MockDownload.Setup(srv => srv.AddDownload(It.IsAny<Uri>(), It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()));
+            MockDownload.Setup(srv => srv.AddDownload(It.IsAny<Uri>(), It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()));
 
             MockNotification.Reset();
 
@@ -583,10 +583,10 @@ namespace Simulator.Tests.Web
                 Mock.Verify(srv => srv.GetCountOfUrl(It.Is<string>(s => s == request1.url)), Times.Exactly(4));
                 Mock.Verify(srv => srv.GetAllMatchingUrl(It.Is<string>(s => s == request1.url)), Times.Once);
                 Mock.VerifyNoOtherCalls();
-            
+
             MockUser.VerifyNoOtherCalls();
 
-            MockDownload.Verify(srv => srv.AddDownload(It.IsAny<Uri>(), It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()), Times.Once);
+            MockDownload.Verify(srv => srv.AddDownload(It.IsAny<Uri>(), It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()), Times.Once);
             MockDownload.VerifyNoOtherCalls();
 
             MockNotification.VerifyNoOtherCalls();
@@ -651,7 +651,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var request = new VehicleRequest()
@@ -737,12 +737,12 @@ namespace Simulator.Tests.Web
             MockUser.Reset();
 
             MockDownload.Reset();
-            MockDownload.Setup(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()))
-                .Callback<Uri, string, Action<int>, Action<bool>>((u, localpath, update, complete) =>
+            MockDownload.Setup(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()))
+                .Callback<Uri, string, Action<int>, Action<bool, Exception>>((u, localpath, update, complete) =>
                 {
                     Assert.AreEqual(uri, u);
                     update(100);
-                    complete(true);
+                    complete(true, null);
                 });
 
             MockNotification.Reset();
@@ -756,7 +756,7 @@ namespace Simulator.Tests.Web
 
                 MockUser.VerifyNoOtherCalls();
 
-            MockDownload.Verify(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()), Times.Once);
+            MockDownload.Verify(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()), Times.Once);
             MockDownload.VerifyNoOtherCalls();
 
             MockNotification.Verify(srv => srv.Send(It.IsAny<string>(), It.IsAny<object>(), "Test User"), Times.Exactly(2));
@@ -799,12 +799,12 @@ namespace Simulator.Tests.Web
             MockUser.Reset();
 
             MockDownload.Reset();
-            MockDownload.Setup(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()))
-                .Callback<Uri, string, Action<int>, Action<bool>>((u, localpath, update, complete) =>
+            MockDownload.Setup(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()))
+                .Callback<Uri, string, Action<int>, Action<bool, Exception>>((u, localpath, update, complete) =>
                 {
                     Assert.AreEqual(uri, u);
                     update(100);
-                    complete(false);
+                    complete(false, new Exception("Test Exception"));
                 });
 
             MockNotification.Reset();
@@ -818,7 +818,7 @@ namespace Simulator.Tests.Web
 
                 MockUser.VerifyNoOtherCalls();
 
-            MockDownload.Verify(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()), Times.AtLeastOnce);
+            MockDownload.Verify(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()), Times.AtLeastOnce);
             MockDownload.VerifyNoOtherCalls();
 
             MockNotification.Verify(srv => srv.Send(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string>()), Times.Exactly(2));
@@ -831,7 +831,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var request = new VehicleRequest()
@@ -872,7 +872,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var existing = new VehicleModel()
@@ -965,7 +965,7 @@ namespace Simulator.Tests.Web
             var result = Browser.Put($"/vehicles/{id}", ctx =>
             {
 
-                 
+
                 ctx.JsonBody(request);
             }).Result;
 
@@ -1015,7 +1015,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var existing = new VehicleModel()
@@ -1080,7 +1080,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var existing = new VehicleModel()
@@ -1143,7 +1143,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var toBeUpdated = new VehicleModel()
@@ -1220,7 +1220,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var existing = new VehicleModel()
@@ -1289,7 +1289,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var existing = new VehicleModel()
@@ -1319,13 +1319,13 @@ namespace Simulator.Tests.Web
                 MockUser.Reset();
 
                 MockDownload.Reset();
-                MockDownload.Setup(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()))
-                    .Callback<Uri, string, Action<int>, Action<bool>>((u, localpath, update, complete) =>
+                MockDownload.Setup(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()))
+                    .Callback<Uri, string, Action<int>, Action<bool, Exception>>((u, localpath, update, complete) =>
                     {   Assert.AreEqual(uri, u);
                         Assert.AreEqual("Downloading", existing.Status);
                         update(100);
                         Assert.AreEqual("Downloading", existing.Status);
-                        complete(true);
+                        complete(true, null);
                     });
 
                 MockNotification.Reset();
@@ -1351,7 +1351,7 @@ namespace Simulator.Tests.Web
 
                 MockUser.VerifyNoOtherCalls();
 
-                MockDownload.Verify(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()), Times.Once);
+                MockDownload.Verify(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()), Times.Once);
                 MockDownload.VerifyNoOtherCalls();
 
                 MockNotification.Verify(srv => srv.Send(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string>()), Times.Exactly(2));
@@ -1369,7 +1369,7 @@ namespace Simulator.Tests.Web
             var temp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(temp, "UnityFS");
+                File.WriteAllBytes(temp, new byte[] { 80, 75, 3, 4 });
 
                 long id = 12345;
                 var existing = new VehicleModel()
@@ -1399,13 +1399,13 @@ namespace Simulator.Tests.Web
                 MockUser.Reset();
 
                 MockDownload.Reset();
-                MockDownload.Setup(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()))
-                    .Callback<Uri, string, Action<int>, Action<bool>>((u, localpath, update, complete) =>
+                MockDownload.Setup(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()))
+                    .Callback<Uri, string, Action<int>, Action<bool, Exception>>((u, localpath, update, complete) =>
                     {   Assert.AreEqual(uri, u);
                         Assert.AreEqual("Downloading", existing.Status);
                         update(100);
                         Assert.AreEqual("Downloading", existing.Status);
-                        complete(false);
+                        complete(false, new Exception("Test Exception"));
                     });
 
                 MockNotification.Reset();
@@ -1431,7 +1431,7 @@ namespace Simulator.Tests.Web
 
                 MockUser.VerifyNoOtherCalls();
 
-                MockDownload.Verify(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool>>()), Times.Once);
+                MockDownload.Verify(srv => srv.AddDownload(uri, It.IsAny<string>(), It.IsAny<Action<int>>(), It.IsAny<Action<bool, Exception>>()), Times.Once);
                 MockDownload.VerifyNoOtherCalls();
 
                 MockNotification.Verify(srv => srv.Send(It.IsAny<string>(), It.IsAny<object>(), It.IsAny<string>()), Times.Exactly(2));
